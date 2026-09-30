@@ -1,0 +1,512 @@
+"""Account service module for digital goods and inventory management.
+
+Handles parsing, bulk import, FIFO stock allocation, 2FA OTP generation,
+and credential formatting for digital products (e.g., ChatGPT Plus accounts).
+"""
+
+import base64
+import hashlib
+import hmac
+import logging
+import struct
+import time
+from typing import Optional, Tuple
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from database.models import Order, OrderItem, Product, ProductAccount
+
+logger = logging.getLogger(__name__)
+
+
+class AccountService:
+    """Service handling digital account inventory, import, and fulfillment."""
+
+    @staticmethod
+    def get_totp_code(secret: Optional[str]) -> Optional[str]:
+        """Generate a 6-digit Time-based One-Time Password (TOTP) code.
+
+        Uses standard RFC 6238 implementation with pure Python standard library
+        (HMAC-SHA1, 30s interval, 6-digit output).
+
+        Args:
+            secret: Base32 encoded 2FA secret key (e.g. E6M7ATQ7QHEALOH7BU2RN6YZRQNBMBE6).
+
+        Returns:
+            6-digit OTP code string, or None if secret is empty or invalid.
+        """
+        if not secret:
+            return None
+
+        try:
+            clean_secret = secret.replace(" ", "").strip().upper()
+            missing_padding = len(clean_secret) % 8
+            if missing_padding != 0:
+                clean_secret += "=" * (8 - missing_padding)
+
+            key = base64.b32decode(clean_secret, casefold=True)
+            interval_no = int(time.time()) // 30
+            msg = struct.pack(">Q", interval_no)
+            h = hmac.new(key, msg, hashlib.sha1).digest()
+            offset = h[19] & 0x0F
+            code = (struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF) % 1000000
+            return f"{code:06d}"
+        except Exception as exc:
+            logger.debug("Failed to calculate TOTP for secret '%s': %s", secret, exc)
+            return None
+
+    @staticmethod
+    def parse_account_line(line: str) -> Optional[dict]:
+        """Parse a single raw string line into account credential fields.
+
+        Supported formats:
+        - email | password | 2fa_secret
+        - email | password
+        - email:password:2fa_secret
+        - or raw text
+
+        Returns:
+            Dict containing parsed fields, or None if line is blank.
+        """
+        raw = line.strip()
+        if not raw:
+            return None
+
+        delimiter = "|" if "|" in raw else (":" if ":" in raw else None)
+
+        if delimiter:
+            parts = [p.strip() for p in raw.split(delimiter)]
+        else:
+            parts = [raw]
+
+        account = parts[0] if len(parts) > 0 else ""
+        password = parts[1] if len(parts) > 1 else ""
+        two_factor = parts[2] if len(parts) > 2 else ""
+        extra = parts[3:] if len(parts) > 3 else []
+
+        return {
+            "raw_data": raw,
+            "account": account,
+            "password": password,
+            "two_factor": two_factor,
+            "note": " | ".join(extra) if extra else None,
+        }
+
+    @staticmethod
+    def validate_account_item(parsed: Optional[dict]) -> Tuple[bool, str]:
+        """Validate parsed account fields to prevent junk/corrupted entries from entering database."""
+        if not parsed:
+            return False, "Dữ liệu trống."
+
+        acc = parsed.get("account", "").strip()
+        pwd = parsed.get("password", "").strip()
+        two_fa = parsed.get("two_factor", "").strip()
+
+        # Account / Email check
+        if not acc or len(acc) < 3:
+            return False, "Tài khoản/Email không hợp lệ (quá ngắn hoặc để trống)."
+
+        if "@" in acc:
+            parts = acc.split("@")
+            if len(parts) != 2 or not parts[0] or "." not in parts[1]:
+                return False, f"Email '{acc}' không đúng định dạng (thiếu @ hoặc domain hợp lệ)."
+
+        # Password check
+        if not pwd or len(pwd) < 4:
+            return False, "Mật khẩu quá ngắn (yêu cầu tối thiểu 4 ký tự)."
+
+        # 2FA Secret Key check
+        if two_fa:
+            import re
+            clean_2fa = two_fa.replace(" ", "").upper()
+            if not re.match(r"^[A-Z2-7=]{10,}$", clean_2fa):
+                return False, f"Mã 2FA Secret '{two_fa}' không đúng chuẩn Base32 (chỉ gồm chữ hoa A-Z và số 2-7, tối thiểu 10 ký tự)."
+
+        return True, "Hợp lệ"
+
+    @staticmethod
+    def add_single_account(
+        db: Session,
+        product_id: int,
+        raw_line: str,
+        note: Optional[str] = None,
+    ) -> Tuple[bool, str, Optional[ProductAccount]]:
+        """Add a single digital account into inventory for a product."""
+        parsed = AccountService.parse_account_line(raw_line)
+        is_valid, err_msg = AccountService.validate_account_item(parsed)
+        if not is_valid:
+            return False, f"Dữ liệu không hợp lệ: {err_msg}", None
+
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            return False, f"Không tìm thấy sản phẩm #{product_id}.", None
+
+        # Check for duplicate available account for this product
+        existing = (
+            db.query(ProductAccount)
+            .filter(
+                ProductAccount.product_id == product_id,
+                ProductAccount.account == parsed["account"],
+                ProductAccount.status == "AVAILABLE",
+            )
+            .first()
+        )
+        if existing:
+            return (
+                False,
+                f"Tài khoản '{parsed['account']}' đã tồn tại trong kho (ID #{existing.id}).",
+                existing,
+            )
+
+        new_acc = ProductAccount(
+            product_id=product_id,
+            account=parsed["account"],
+            password=parsed["password"],
+            two_factor=parsed["two_factor"],
+            raw_data=parsed["raw_data"],
+            status="AVAILABLE",
+            note=note or parsed.get("note"),
+        )
+        db.add(new_acc)
+        db.flush()
+
+        # Update product stock quantity
+        AccountService.sync_product_stock(db, product_id)
+
+        return True, "Thêm tài khoản vào kho thành công.", new_acc
+
+    @staticmethod
+    def add_accounts_bulk(
+        db: Session,
+        product_id: int,
+        text_content: str,
+        note: Optional[str] = None,
+    ) -> dict:
+        """Add multiple digital accounts from multiline text.
+
+        Args:
+            db: Database session.
+            product_id: Target product ID.
+            text_content: Multiline string containing accounts.
+            note: Optional note to attach to added items.
+
+        Returns:
+            Dict containing operation summary (total, added, duplicates, errors).
+        """
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            raise ValueError(f"Sản phẩm với ID #{product_id} không tồn tại.")
+
+        lines = [line.strip() for line in text_content.strip().splitlines() if line.strip()]
+        added_count = 0
+        duplicate_count = 0
+        error_lines = []
+        batch_accounts = set()
+
+        for idx, line in enumerate(lines, start=1):
+            parsed = AccountService.parse_account_line(line)
+            is_valid, err_msg = AccountService.validate_account_item(parsed)
+            if not is_valid:
+                error_lines.append(f"Dòng {idx}: {err_msg}")
+                continue
+
+            acc_key = parsed["account"].lower()
+            if acc_key in batch_accounts:
+                duplicate_count += 1
+                continue
+
+            # Check existing available account in DB
+            exists_in_db = (
+                db.query(ProductAccount)
+                .filter(
+                    ProductAccount.product_id == product_id,
+                    ProductAccount.account == parsed["account"],
+                    ProductAccount.status == "AVAILABLE",
+                )
+                .first()
+            )
+            if exists_in_db:
+                duplicate_count += 1
+                continue
+
+            batch_accounts.add(acc_key)
+            new_acc = ProductAccount(
+                product_id=product_id,
+                account=parsed["account"],
+                password=parsed["password"],
+                two_factor=parsed["two_factor"],
+                raw_data=parsed["raw_data"],
+                status="AVAILABLE",
+                note=note or parsed.get("note"),
+            )
+            db.add(new_acc)
+            added_count += 1
+
+        db.flush()
+        # Update product stock
+        AccountService.sync_product_stock(db, product_id)
+
+        return {
+            "total_lines": len(lines),
+            "added": added_count,
+            "duplicates": duplicate_count,
+            "errors": error_lines,
+            "new_stock": product.stock_quantity,
+        }
+
+    @staticmethod
+    def get_available_accounts(
+        db: Session,
+        product_id: int,
+        limit: int = 1,
+    ) -> list[ProductAccount]:
+        """Retrieve available accounts in FIFO order (oldest first)."""
+        return (
+            db.query(ProductAccount)
+            .filter(
+                ProductAccount.product_id == product_id,
+                ProductAccount.status == "AVAILABLE",
+            )
+            .order_by(ProductAccount.id.asc())
+            .limit(limit)
+            .all()
+        )
+
+    @staticmethod
+    def count_available_accounts(db: Session, product_id: int) -> int:
+        """Count total available accounts in stock for a product."""
+        return (
+            db.query(func.count(ProductAccount.id))
+            .filter(
+                ProductAccount.product_id == product_id,
+                ProductAccount.status == "AVAILABLE",
+            )
+            .scalar()
+            or 0
+        )
+
+    @staticmethod
+    def reserve_accounts_for_order(db: Session, order: Order) -> list[ProductAccount]:
+        """Reserve available accounts for a pending order to prevent race conditions."""
+        reserved = []
+        for item in order.items:
+            needed = item.quantity
+            avail = AccountService.get_available_accounts(db, item.product_id, limit=needed)
+            for acc in avail:
+                acc.status = "RESERVED"
+                acc.order_id = order.id
+                reserved.append(acc)
+            db.flush()
+            AccountService.sync_product_stock(db, item.product_id)
+        return reserved
+
+    @staticmethod
+    def release_reserved_order(db: Session, order_id: int) -> int:
+        """Release any reserved accounts if an order is cancelled or timed out."""
+        reserved_accs = (
+            db.query(ProductAccount)
+            .filter(ProductAccount.order_id == order_id, ProductAccount.status == "RESERVED")
+            .all()
+        )
+        count = len(reserved_accs)
+        prod_ids = set()
+        for acc in reserved_accs:
+            acc.status = "AVAILABLE"
+            acc.order_id = None
+            prod_ids.add(acc.product_id)
+        db.flush()
+        for pid in prod_ids:
+            AccountService.sync_product_stock(db, pid)
+        return count
+
+    @staticmethod
+    def allocate_accounts_for_order(
+        db: Session,
+        order: Order,
+    ) -> list[ProductAccount]:
+        """Allocate accounts to a paid order in FIFO order.
+
+        Prioritizes accounts already reserved for this order, then grabs from AVAILABLE.
+        Updates status of allocated accounts to 'SOLD' and records order_id and sold_at.
+        """
+        allocated: list[ProductAccount] = []
+
+        for item in order.items:
+            product_id = item.product_id
+            needed_qty = item.quantity
+
+            # Check if accounts were already reserved for this order
+            reserved_accounts = (
+                db.query(ProductAccount)
+                .filter(
+                    ProductAccount.order_id == order.id,
+                    ProductAccount.product_id == product_id,
+                    ProductAccount.status == "RESERVED",
+                )
+                .all()
+            )
+
+            accounts_to_fulfill = list(reserved_accounts)
+
+            # If not enough reserved, pull from AVAILABLE
+            if len(accounts_to_fulfill) < needed_qty:
+                extra_needed = needed_qty - len(accounts_to_fulfill)
+                extra_accounts = AccountService.get_available_accounts(
+                    db=db, product_id=product_id, limit=extra_needed
+                )
+                accounts_to_fulfill.extend(extra_accounts)
+
+            for acc in accounts_to_fulfill:
+                acc.status = "SOLD"
+                acc.order_id = order.id
+                acc.sold_at = func.now()
+                allocated.append(acc)
+
+            # Flush status updates to database before counting remaining stock
+            db.flush()
+
+            # Sync stock quantity for this product
+            AccountService.sync_product_stock(db, product_id)
+
+        db.flush()
+        return allocated
+
+    @staticmethod
+    def sync_product_stock(db: Session, product_id: Optional[int] = None) -> None:
+        """Sync Product.stock_quantity with available ProductAccount count.
+
+        If product_id is None, syncs all products that have items in product_accounts.
+        """
+        query = db.query(Product)
+        if product_id is not None:
+            query = query.filter(Product.id == product_id)
+
+        products = query.all()
+        for p in products:
+            # Check if this product has accounts managed in product_accounts
+            has_managed_accounts = (
+                db.query(func.count(ProductAccount.id))
+                .filter(ProductAccount.product_id == p.id)
+                .scalar()
+                > 0
+            )
+            if has_managed_accounts:
+                avail_count = (
+                    db.query(func.count(ProductAccount.id))
+                    .filter(
+                        ProductAccount.product_id == p.id,
+                        ProductAccount.status == "AVAILABLE",
+                    )
+                    .scalar()
+                    or 0
+                )
+                p.stock_quantity = avail_count
+        db.flush()
+
+    @staticmethod
+    def get_stock_summary(db: Session) -> list[dict]:
+        """Get inventory overview for all active products."""
+        products = db.query(Product).order_by(Product.id.asc()).all()
+        summary = []
+        for p in products:
+            avail = (
+                db.query(func.count(ProductAccount.id))
+                .filter(ProductAccount.product_id == p.id, ProductAccount.status == "AVAILABLE")
+                .scalar()
+                or 0
+            )
+            sold = (
+                db.query(func.count(ProductAccount.id))
+                .filter(ProductAccount.product_id == p.id, ProductAccount.status == "SOLD")
+                .scalar()
+                or 0
+            )
+            summary.append(
+                {
+                    "product_id": p.id,
+                    "product_name": p.name,
+                    "price": p.price,
+                    "available_stock": avail,
+                    "sold_count": sold,
+                    "total_stock_setting": p.stock_quantity,
+                    "is_active": p.is_active,
+                }
+            )
+        return summary
+
+    @staticmethod
+    def format_delivery_message(
+        order: Order,
+        accounts: list[ProductAccount],
+        item_name: str,
+    ) -> str:
+        """Format customer delivery message containing real account credentials."""
+        order_id = order.id
+        total_amount = order.total_amount
+
+        # Check if test package
+        if "test" in item_name.lower() and not accounts:
+            return (
+                f"🎉 <b>XÁC NHẬN THANH TOÁN THÀNH CÔNG ĐƠN TEST #{order_id}!</b>\n\n"
+                f"🤖 <b>Mặt hàng:</b> <b>{item_name}</b>\n"
+                f"💵 <b>Số tiền đã nhận:</b> <b>{total_amount:,.0f} VND</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"✅ Hệ thống Webhook và kiểm tra thanh toán hoạt động hoàn hảo 100%!"
+            )
+
+        is_warranty_full = "Bảo hành full" in item_name
+        if is_warranty_full:
+            warranty_text = (
+                "🛡️ <b>CHÍNH SÁCH BẢO HÀNH FULL 30 NGÀY:</b>\n"
+                "• Bảo hành 1 đổi 1 trong 30 ngày nếu xảy ra sự cố từ hệ thống OpenAI.\n"
+                "• Kênh hỗ trợ kỹ thuật: @AdminSupport\n"
+            )
+        else:
+            warranty_text = (
+                "⚠️ <b>LƯU Ý SỬ DỤNG:</b>\n"
+                "• Tài khoản kích hoạt sử dụng riêng biệt, vui lòng không đổi email gốc.\n"
+                "• Liên hệ hỗ trợ nếu cần hướng dẫn đăng nhập.\n"
+            )
+
+        # Build credentials section
+        if accounts:
+            account_blocks = []
+            for i, acc in enumerate(accounts, start=1):
+                prefix = f"🔹 <b>TÀI KHOẢN #{i}:</b>\n" if len(accounts) > 1 else ""
+                acc_lines = [prefix]
+                acc_lines.append(f"• 📧 <b>Email:</b> <code>{acc.account}</code>")
+                if acc.password:
+                    acc_lines.append(f"• 🔑 <b>Mật khẩu:</b> <code>{acc.password}</code>")
+
+                if acc.two_factor:
+                    acc_lines.append(f"• 🔐 <b>Mã 2FA Secret:</b> <code>{acc.two_factor}</code>")
+                    totp_code = AccountService.get_totp_code(acc.two_factor)
+                    if totp_code:
+                        acc_lines.append(f"• ⚡ <b>Mã OTP hiện tại (30s):</b> <code>{totp_code}</code>")
+                    acc_lines.append(
+                        "• 📲 <i>Lấy mã OTP mới: Vào <b>https://2fa.live</b> dán mã 2FA Secret trên để lấy mã 6 số.</i>"
+                    )
+
+                account_blocks.append("\n".join(acc_lines))
+
+            credentials_text = "\n\n".join(account_blocks)
+        else:
+            # Fallback if no accounts were in stock
+            credentials_text = (
+                "⚠️ <i>Tài khoản của bạn đang được kỹ thuật viên chuẩn bị kích hoạt thủ công.\n"
+                "Vui lòng gửi mã đơn hàng cho @AdminSupport để nhận tài khoản ngay lập tức!</i>"
+            )
+
+        message = (
+            f"🎉 <b>THANH TOÁN THÀNH CÔNG ĐƠN HÀNG #{order_id}!</b>\n\n"
+            f"🤖 <b>Gói dịch vụ:</b> <b>{item_name}</b>\n"
+            f"💵 <b>Số tiền đã nhận:</b> <b>{total_amount:,.0f} VND</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📦 <b>THÔNG TIN TÀI KHOẢN CỦA BẠN:</b>\n\n"
+            f"{credentials_text}\n\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🌐 <b>ĐĂNG NHẬP TẠI:</b> https://chatgpt.com\n\n"
+            f"{warranty_text}\n"
+            f"Cảm ơn bạn đã tin tưởng ủng hộ shop! Chúc bạn có trải nghiệm tuyệt vời cùng ChatGPT Plus."
+        )
+        return message

@@ -16,7 +16,14 @@ from handlers.checkout_handler import (
     checkout_conversation_handler,
     payment_confirm_callback_handler,
 )
-from handlers.start_handler import menu_callback_handler, start, test_pay_command
+from handlers.start_handler import (
+    add_stock_command,
+    menu_callback_handler,
+    myid_command,
+    start,
+    stock_command,
+    test_pay_command,
+)
 from services.order_service import OrderService
 from webhook_server import WebhookServer
 
@@ -55,6 +62,9 @@ async def run_application() -> None:
 
     # 3. Register Command and Menu Handlers
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("myid", myid_command))
+    application.add_handler(CommandHandler("stock", stock_command))
+    application.add_handler(CommandHandler("addstock", add_stock_command))
     application.add_handler(CommandHandler("test_pay", test_pay_command))
 
     # Main menu inline buttons callback handler

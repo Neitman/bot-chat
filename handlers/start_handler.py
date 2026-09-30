@@ -3,15 +3,59 @@
 Handles the `/start` command and navigation menu for ChatGPT Plus Shop Bot.
 """
 
+from functools import wraps
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from config import ADMIN_CHAT_ID, is_admin_user
 from database.database import get_db
+from services.account_service import AccountService
 from services.order_service import OrderService
 from services.payment_service import PaymentService
 
 logger = logging.getLogger(__name__)
+
+
+def admin_required(func):
+    """Decorator to enforce admin-only access on commands."""
+
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user = update.effective_user
+        if not user:
+            return
+
+        if not ADMIN_CHAT_ID:
+            msg = (
+                "⚠️ <b>CHƯA CẤU HÌNH ADMIN_CHAT_ID!</b>\n\n"
+                f"ID Telegram của bạn là: <code>{user.id}</code>\n\n"
+                "Để sử dụng lệnh quản trị và bảo mật bot, vui lòng thêm dòng sau vào file <code>.env</code>:\n"
+                f"<code>ADMIN_CHAT_ID={user.id}</code>\n\n"
+                "Sau khi lưu, khởi động lại bot để kích hoạt bảo vệ an toàn."
+            )
+            if update.message:
+                await update.message.reply_html(msg)
+            return
+
+        if not is_admin_user(user.id):
+            logger.warning(
+                "Unauthorized access to '%s' attempted by user %s (%s)",
+                func.__name__,
+                user.id,
+                user.full_name,
+            )
+            if update.message:
+                await update.message.reply_html(
+                    "⛔ <b>TRUY CẬP BỊ TỪ CHỐI!</b>\n\n"
+                    "Lệnh này chỉ dành riêng cho <b>Quản trị viên (Chủ shop)</b>.\n"
+                    f"ID Telegram của bạn: <code>{user.id}</code>"
+                )
+            return
+
+        return await func(update, context, *args, **kwargs)
+
+    return wrapper
 
 
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
@@ -162,8 +206,9 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await start(update, context)
 
 
+@admin_required
 async def test_pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Test command to simulate a successful payment: /test_pay <order_id>"""
+    """Test command to simulate a successful payment: /test_pay <order_id> (Admin only)."""
     if not update.message:
         return
 
@@ -194,3 +239,107 @@ async def test_pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await update.message.reply_html(delivery_text, disable_web_page_preview=True)
         else:
             await update.message.reply_text(f"Kết quả xử lý: {msg}")
+
+
+@admin_required
+async def stock_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command to check digital inventory: /stock (Admin only)."""
+    if not update.message:
+        return
+
+    with get_db() as db:
+        summary = AccountService.get_stock_summary(db)
+
+    lines = ["📦 <b>BÁO CÁO TỒN KHO TÀI KHOẢN (ADMIN ONLY):</b>\n"]
+    for item in summary:
+        status_str = "🟢 Đang bán" if item["is_active"] else "🔴 Tạm dừng"
+        lines.append(
+            f"🔹 <b>[{item['product_id']}] {item['product_name']}</b>\n"
+            f"   • Giá: <b>{item['price']:,.0f} VND</b>\n"
+            f"   • Sẵn sàng bán: <b>{item['available_stock']}</b> tài khoản\n"
+            f"   • Đã bán: <b>{item['sold_count']}</b> tài khoản\n"
+            f"   • Trạng thái: {status_str}\n"
+        )
+    lines.append("<i>Dùng lệnh <code>/addstock &lt;id&gt; &lt;email|pass|2fa&gt;</code> để nạp thêm tài khoản.</i>")
+
+    await update.message.reply_html("\n".join(lines))
+
+
+@admin_required
+async def add_stock_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command to add accounts into database (Admin only):
+    Usage:
+    /addstock <product_id> <email | pass | 2fa>
+    or reply to a message containing list of accounts.
+    """
+    if not update.message:
+        return
+
+    text = update.message.text or ""
+    parts = text.split(maxsplit=2)
+    if len(parts) < 3:
+        usage = (
+            "⚠️ <b>CÁCH DÙNG LỆNH /addstock:</b>\n\n"
+            "<code>/addstock &lt;ID_Sản_phẩm&gt; &lt;email | pass | 2fa&gt;</code>\n\n"
+            "<b>Ví dụ:</b>\n"
+            "<code>/addstock 1 biradarguru37@googlemail.com | CHATLGBT9999 | E6M7ATQ7QHEALOH7BU2RN6YZRQNBMBE6</code>\n\n"
+            "<i>(Có thể dán nhiều dòng cùng lúc sau mã ID)</i>"
+        )
+        await update.message.reply_html(usage)
+        return
+
+    try:
+        product_id = int(parts[1])
+    except ValueError:
+        await update.message.reply_text("ID sản phẩm phải là số nguyên (ví dụ: 1 hoặc 2).")
+        return
+
+    accounts_content = parts[2].strip()
+
+    with get_db() as db:
+        try:
+            result = AccountService.add_accounts_bulk(
+                db=db,
+                product_id=product_id,
+                text_content=accounts_content,
+            )
+            report = (
+                f"✅ <b>NẠP HÀNG THÀNH CÔNG!</b>\n\n"
+                f"• Sản phẩm ID: <b>#{product_id}</b>\n"
+                f"• Đã thêm mới: <b>{result['added']}</b> tài khoản\n"
+                f"• Bỏ qua (trùng lặp): <b>{result['duplicates']}</b>\n"
+                f"• Tồn kho hiện tại: <b>{result['new_stock']}</b> tài khoản\n"
+            )
+            if result["errors"]:
+                report += f"• ⚠️ Bỏ qua {len(result['errors'])} dòng lỗi định dạng:\n"
+                for err in result["errors"][:5]:
+                    report += f"   - {err}\n"
+            await update.message.reply_html(report)
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Lỗi khi nạp hàng: {exc}")
+
+
+async def myid_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Command to view caller's Telegram Chat ID: /myid"""
+    user = update.effective_user
+    if not user or not update.message:
+        return
+
+    is_adm = is_admin_user(user.id)
+    badge = "👑 <b>Quản trị viên (Admin)</b>" if is_adm else "👤 <b>Khách hàng (User)</b>"
+
+    msg = (
+        f"🆔 <b>THÔNG TIN TÀI KHOẢN TELEGRAM CỦA BẠN:</b>\n\n"
+        f"• Telegram ID: <code>{user.id}</code>\n"
+        f"• Họ tên: <b>{user.full_name}</b>\n"
+        f"• Username: @{user.username or 'Không có'}\n"
+        f"• Quyền hạn: {badge}\n"
+    )
+
+    if not is_adm:
+        msg += (
+            f"\n💡 <i>Nếu bạn là chủ shop, hãy sao chép ID <code>{user.id}</code> và thêm vào file <code>.env</code>:\n"
+            f"<code>ADMIN_CHAT_ID={user.id}</code></i>"
+        )
+
+    await update.message.reply_html(msg)

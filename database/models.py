@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -55,6 +56,7 @@ class Product(Base):
 
     # Relationships
     order_items = relationship("OrderItem", back_populates="product")
+    accounts = relationship("ProductAccount", back_populates="product", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Product(id={self.id}, name='{self.name}', price={self.price:,} VND, stock={self.stock_quantity})>"
@@ -74,6 +76,7 @@ class Order(Base):
     # Relationships
     user = relationship("User", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    delivered_accounts = relationship("ProductAccount", back_populates="order")
 
     def __repr__(self) -> str:
         return f"<Order(id={self.id}, user_id={self.user_id}, total={self.total_amount:,} VND, status='{self.status}')>"
@@ -96,3 +99,38 @@ class OrderItem(Base):
 
     def __repr__(self) -> str:
         return f"<OrderItem(id={self.id}, order_id={self.order_id}, product_id={self.product_id}, qty={self.quantity})>"
+
+
+class ProductAccount(Base):
+    """Digital account / inventory item for a Product.
+
+    Stores credentials (account/email, password, 2FA secret key) and
+    lifecycle status (AVAILABLE, SOLD, ERROR).
+    """
+
+    __tablename__ = "product_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+
+    # Credentials
+    account = Column(String(255), nullable=True, index=True)  # Email or username (e.g. biradarguru37@googlemail.com)
+    password = Column(String(255), nullable=True)  # Password (e.g. CHATLGBT9999)
+    two_factor = Column(String(255), nullable=True)  # 2FA Secret Key (e.g. E6M7ATQ7QHEALOH7BU2RN6YZRQNBMBE6)
+    raw_data = Column(Text, nullable=False)  # Full raw line formatted as entered
+
+    # State tracking
+    status = Column(String(50), default="AVAILABLE", nullable=False, index=True)  # AVAILABLE, SOLD, ERROR
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    sold_at = Column(DateTime(timezone=True), nullable=True)
+    note = Column(String(500), nullable=True)
+
+    # Relationships
+    product = relationship("Product", back_populates="accounts")
+    order = relationship("Order", back_populates="delivered_accounts")
+
+    def __repr__(self) -> str:
+        return f"<ProductAccount(id={self.id}, product_id={self.product_id}, account='{self.account}', status='{self.status}')>"

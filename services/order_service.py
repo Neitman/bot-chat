@@ -6,10 +6,12 @@ and order processing adhering to clean architecture principles.
 
 import urllib.parse
 from typing import Optional
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from config import BANK_ACCOUNT, BANK_ACCOUNT_NAME, BANK_ID
-from database.models import Order, OrderItem, Product, User
+from database.models import Order, OrderItem, Product, ProductAccount, User
+from services.account_service import AccountService
 
 
 class OrderService:
@@ -60,6 +62,8 @@ class OrderService:
     @staticmethod
     def get_active_products(db: Session) -> list[Product]:
         """Retrieve all currently active products available in stock."""
+        # Sync stock for products managed via ProductAccount first
+        AccountService.sync_product_stock(db)
         return (
             db.query(Product)
             .filter(Product.is_active == True, Product.stock_quantity > 0)  # noqa: E712
@@ -70,6 +74,7 @@ class OrderService:
     @staticmethod
     def get_product_by_id(db: Session, product_id: int) -> Optional[Product]:
         """Retrieve a specific product by its primary key ID."""
+        AccountService.sync_product_stock(db, product_id)
         return db.query(Product).filter(Product.id == product_id).first()
 
     @staticmethod
@@ -80,7 +85,7 @@ class OrderService:
         quantity: int,
         full_name: Optional[str] = None,
     ) -> Order:
-        """Create a new customer order and line item, decrementing stock."""
+        """Create a new customer order and line item, reserving inventory stock."""
         if quantity <= 0:
             raise ValueError("Số lượng đặt hàng phải lớn hơn 0.")
 
@@ -88,16 +93,28 @@ class OrderService:
         if not product or not product.is_active:
             raise ValueError("Sản phẩm không tồn tại hoặc đã ngừng kinh doanh.")
 
-        if product.stock_quantity < quantity:
-            raise ValueError(
-                f"Sản phẩm '{product.name}' chỉ còn {product.stock_quantity} gói trong kho."
-            )
+        # Check if product inventory is managed via ProductAccount table
+        has_managed_accounts = (
+            db.query(func.count(ProductAccount.id))
+            .filter(ProductAccount.product_id == product_id)
+            .scalar()
+            > 0
+        )
+
+        if has_managed_accounts:
+            avail_accounts = AccountService.count_available_accounts(db, product_id)
+            if avail_accounts < quantity:
+                raise ValueError(
+                    f"Sản phẩm '{product.name}' chỉ còn {avail_accounts} tài khoản trong kho."
+                )
+        else:
+            if product.stock_quantity < quantity:
+                raise ValueError(
+                    f"Sản phẩm '{product.name}' chỉ còn {product.stock_quantity} gói trong kho."
+                )
 
         # Ensure user exists
         user = OrderService.get_or_create_user(db=db, telegram_id=telegram_id, full_name=full_name)
-
-        # Deduct inventory stock
-        product.stock_quantity -= quantity
 
         # Calculate totals
         total_amount = product.price * quantity
@@ -120,6 +137,13 @@ class OrderService:
         )
         db.add(order_item)
         db.flush()
+
+        # Reserve accounts or deduct inventory
+        if has_managed_accounts:
+            AccountService.reserve_accounts_for_order(db, order)
+        else:
+            product.stock_quantity -= quantity
+            db.flush()
 
         return order
 

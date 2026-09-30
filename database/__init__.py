@@ -1,7 +1,7 @@
 """Database package initialization."""
 
 from database.database import Base, SessionLocal, engine, get_db
-from database.models import Order, OrderItem, Product, User
+from database.models import Order, OrderItem, Product, ProductAccount, User
 
 __all__ = [
     "Base",
@@ -10,6 +10,7 @@ __all__ = [
     "get_db",
     "User",
     "Product",
+    "ProductAccount",
     "Order",
     "OrderItem",
 ]

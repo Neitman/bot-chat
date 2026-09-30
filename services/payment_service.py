@@ -9,7 +9,8 @@ import re
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 
-from database.models import Order, OrderItem, Product, User
+from database.models import Order, OrderItem, Product, ProductAccount, User
+from services.account_service import AccountService
 
 logger = logging.getLogger(__name__)
 
@@ -43,54 +44,11 @@ class PaymentService:
         return None
 
     @staticmethod
-    def generate_delivery_message(order: Order, item_name: str) -> str:
+    def generate_delivery_message(order: Order, item_name: str, accounts: Optional[list[ProductAccount]] = None) -> str:
         """Format a rich delivery message delivering the ChatGPT Plus credentials to customer."""
-        order_id = order.id
-        total_amount = order.total_amount
-
-        # Check if this is a test package
-        if "test" in item_name.lower():
-            return (
-                f"🎉 <b>XÁC NHẬN THANH TOÁN THÀNH CÔNG ĐƠN HÀNG TEST #{order_id}!</b>\n\n"
-                f"🤖 <b>Mặt hàng:</b> <b>{item_name}</b>\n"
-                f"💵 <b>Số tiền đã nhận:</b> <b>{total_amount:,.0f} VND</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"✅ <b>KẾT QUẢ KIỂM TRA WEBHOOK & THANH TOÁN: HOÀN TẤT THÀNH CÔNG 100%!</b>\n\n"
-                f"• 📡 <b>Kết nối SePay Webhook:</b> Hoạt động chính xác.\n"
-                f"• 💰 <b>Biến động số dư:</b> Đã khớp đơn #{order_id} thành công.\n"
-                f"• ⚡ <b>Trạng thái đơn:</b> Đã chuyển sang <b>PAID (Đã thanh toán)</b>.\n"
-                f"• 🎁 <b>Phản hồi tự động:</b> Kích hoạt ngay lập tức sau khi tiền vào.\n\n"
-                f"<i>Hệ thống bot và Webhook của bạn đã sẵn sàng 100% để phục vụ khách hàng!</i>"
-            )
-
-        is_warranty_full = "Bảo hành full" in item_name
-
-        if is_warranty_full:
-            warranty_text = (
-                "🛡️ <b>CHÍNH SÁCH BẢO HÀNH FULL 30 NGÀY:</b>\n"
-                "• Bảo hành 1 đổi 1 trọn vẹn 30 ngày nếu có lỗi từ OpenAI.\n"
-                "• Hỗ trợ kỹ thuật 24/7 qua admin @AdminSupport.\n"
-            )
-        else:
-            warranty_text = (
-                "⚠️ <b>LƯU Ý SỬ DỤNG:</b>\n"
-                "• Gói không bảo hành, vui lòng không đổi email gốc.\n"
-                "• Tài khoản kích hoạt sử dụng riêng biệt.\n"
-            )
-
-        delivery_text = (
-            f"🎉 <b>THANH TOÁN THÀNH CÔNG ĐƠN HÀNG #{order_id}!</b>\n\n"
-            f"🤖 <b>Gói dịch vụ:</b> <b>{item_name}</b>\n"
-            f"💵 <b>Số tiền đã nhận:</b> <b>{total_amount:,.0f} VND</b>\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            "📦 <b>THÔNG TIN TÀI KHOẢN CHATGPT PLUS CỦA BẠN:</b>\n\n"
-            f"• 📧 Email đăng nhập: <code>plus.{order_id}.user@shopbot.vip</code>\n"
-            f"• 🔑 Mật khẩu: <code>ChatgptPlus2026@{order_id}!</code>\n"
-            "• 🌐 Link đăng nhập: https://chatgpt.com\n\n"
-            f"{warranty_text}\n"
-            "Cảm ơn bạn đã lựa chọn <b>ChatGPT Plus Store</b>! Chúc bạn có trải nghiệm tuyệt vời cùng AI."
-        )
-        return delivery_text
+        if accounts is None:
+            accounts = list(order.delivered_accounts) if order.delivered_accounts else []
+        return AccountService.format_delivery_message(order, accounts, item_name)
 
     @staticmethod
     def process_payment(
@@ -120,9 +78,15 @@ class PaymentService:
         if not order:
             return False, f"Đơn hàng #{order_id} không tồn tại trên hệ thống.", None, None
 
+        # Determine item name
+        first_item = order.items[0] if order.items else None
+        item_name = first_item.product.name if first_item and first_item.product else "ChatGPT Plus 1 Tháng"
+
         if order.status == "PAID":
-            # Idempotency: already paid and delivered
-            return True, f"Đơn hàng #{order_id} đã được thanh toán và kích hoạt trước đó.", order, None
+            # Idempotency: already paid, retrieve already delivered accounts
+            delivered_accounts = list(order.delivered_accounts)
+            delivery_message = AccountService.format_delivery_message(order, delivered_accounts, item_name)
+            return True, f"Đơn hàng #{order_id} đã được thanh toán và kích hoạt trước đó.", order, delivery_message
 
         if transfer_amount < order.total_amount:
             msg = (
@@ -132,20 +96,20 @@ class PaymentService:
             logger.warning(msg)
             return False, msg, order, None
 
-        # Determine item name
-        first_item = order.items[0] if order.items else None
-        item_name = first_item.product.name if first_item and first_item.product else "ChatGPT Plus 1 Tháng"
-
-        # Update order status to PAID
+        # Mark order as PAID
         order.status = "PAID"
         db.flush()
 
-        delivery_message = PaymentService.generate_delivery_message(order, item_name)
+        # Allocate real accounts from inventory
+        delivered_accounts = AccountService.allocate_accounts_for_order(db, order)
+
+        delivery_message = AccountService.format_delivery_message(order, delivered_accounts, item_name)
         logger.info(
-            "Order #%s successfully marked as PAID (Ref: %s, Gateway: %s)",
+            "Order #%s successfully marked as PAID (Ref: %s, Gateway: %s, Accounts delivered: %s)",
             order_id,
             transaction_ref,
             gateway,
+            len(delivered_accounts),
         )
 
-        return True, "Thanh toán thành công và đã chuẩn bị gói hàng.", order, delivery_message
+        return True, "Thanh toán thành công và đã xuất kho tài khoản.", order, delivery_message

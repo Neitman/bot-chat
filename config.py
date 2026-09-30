@@ -34,6 +34,24 @@ WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8000").strip())
 SEPAY_API_KEY: str = os.getenv("SEPAY_API_KEY", "").strip()
 ADMIN_CHAT_ID: str = os.getenv("ADMIN_CHAT_ID", "").strip()
 
+
+def get_admin_ids() -> list[int]:
+    """Return list of allowed admin Telegram user IDs parsed from ADMIN_CHAT_ID."""
+    if not ADMIN_CHAT_ID:
+        return []
+    ids = []
+    for part in ADMIN_CHAT_ID.split(","):
+        part = part.strip()
+        if part.isdigit() or (part.startswith("-") and part[1:].isdigit()):
+            ids.append(int(part))
+    return ids
+
+
+def is_admin_user(user_id: int) -> bool:
+    """Check if a given Telegram user ID has administrator privileges."""
+    return user_id in get_admin_ids()
+
+
 # Configuration validation
 if not TELEGRAM_TOKEN:
     raise ValueError(
