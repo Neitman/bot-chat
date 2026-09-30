@@ -1,0 +1,16 @@
+# DANH SÁCH MẪU NẠP TÀI KHOẢN CHATGPT PLUS VÀO KHO
+# Mỗi dòng là 1 tài khoản riêng biệt.
+# Hệ thống hỗ trợ dấu gạch đứng '|' hoặc dấu hai chấm ':'.
+
+# === Định dạng 1 (Khuyên dùng): email | password | 2fa_secret ===
+alex.turner2026@gmail.com | ChatGPT@Pass2026 | JBSWY3DPEHPK3PXP
+emma.watson.ai@outlook.com | StrongPass#998 | SIUXRUQZTXFTX26O4LATWGKKCN4L3AP3
+techpro.dev99@gmail.com | AlphaBeta!789 | E6M7ATQ7QHEALOH7BU2RN6YZRQNBMBE6
+
+# === Định dạng 2 (Dùng dấu hai chấm ':'): email:password:2fa_secret ===
+david.beckham@gmail.com:PassWord@123:HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ
+sarah.connor@yahoo.com:Terminator!2026:NVKG643VOFPWC5C2
+
+# === Định dạng 3 (Không có 2FA, chỉ có Email và Password): ===
+budget_user1@gmail.com | MatKhauDonGian123
+budget_user2@gmail.com | MatKhauDonGian456

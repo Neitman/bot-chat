@@ -34,13 +34,14 @@ class User(Base):
     full_name = Column(String(255), nullable=True)
     phone = Column(String(50), nullable=True)
     address = Column(String(500), nullable=True)
+    language = Column(String(10), default=None, nullable=True)  # 'vi' or 'en'
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     orders = relationship("Order", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
-        return f"<User(id={self.id}, telegram_id={self.telegram_id}, name='{self.full_name}')>"
+        return f"<User(id={self.id}, telegram_id={self.telegram_id}, name='{self.full_name}', lang='{self.language}')>"
 
 
 class Product(Base):

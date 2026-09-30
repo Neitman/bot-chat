@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from database.database import get_db
 from database.models import Product
 from services.account_service import AccountService
+from services.broadcast_service import BroadcastService
 
 
 def show_stock() -> None:
@@ -64,6 +65,12 @@ def import_accounts(product_id: int, content: str, note: str = "") -> None:
                 print(f"   - {err}")
         print(f"• Số lượng tồn kho hiện tại: {result['new_stock']} tài khoản")
         print("━" * 50 + "\n")
+
+        # Automatically broadcast restock notification to all registered customers
+        if result["added"] > 0:
+            print("📢 Đang gửi thông báo hàng mới về đến tất cả khách hàng...")
+            b_res = BroadcastService.broadcast_restock_sync(product_id, result["added"])
+            print(f"✅ Đã phát thông báo: {b_res.get('sent', 0)}/{b_res.get('total', 0)} khách hàng nhận thành công.\n")
 
 
 def interactive_mode() -> None:

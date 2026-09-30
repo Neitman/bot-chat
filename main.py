@@ -67,8 +67,8 @@ async def run_application() -> None:
     application.add_handler(CommandHandler("addstock", add_stock_command))
     application.add_handler(CommandHandler("test_pay", test_pay_command))
 
-    # Main menu inline buttons callback handler
-    application.add_handler(CallbackQueryHandler(menu_callback_handler, pattern=r"^menu_"))
+    # Main menu & Language inline buttons callback handler
+    application.add_handler(CallbackQueryHandler(menu_callback_handler, pattern=r"^(menu_|set_lang_)"))
 
     # Payment confirmation callback handler ("paid_order_<id>")
     application.add_handler(

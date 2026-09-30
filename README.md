@@ -95,6 +95,62 @@ Khi chạy, hệ thống sẽ:
 
 ---
 
+## 📜 Danh sách câu lệnh tương tác (Bot Commands & UI)
+
+### 👤 1. Dành cho Khách hàng (Customer Commands)
+
+| Câu lệnh / Nút bấm | Mô tả chi tiết |
+| :--- | :--- |
+| **`/start`** | Khởi động bot. Nếu là lần đầu tiên, bot sẽ yêu cầu chọn ngôn ngữ (🇻🇳 Tiếng Việt hoặc 🇬🇧 English). Sau đó mở menu tương tác chính. |
+| **`🛒 Đơn hàng của tôi`** | Tra cứu lịch sử mua hàng: Hiển thị trạng thái đơn, tên gói, tổng tiền và **toàn bộ thông tin tài khoản đã mua** (Email, Mật khẩu, 2FA, mã OTP 30s mới nhất) để sao chép nhanh bất cứ lúc nào. |
+| **`🌐 Đổi ngôn ngữ (Language)`** | Nút bấm trực tiếp trên menu chính, cho phép khách hàng đổi qua lại giữa Tiếng Việt và Tiếng Anh bất kỳ lúc nào. |
+| **`/buy`** hoặc **`/checkout`** | Bắt đầu quy trình chọn mua gói dịch vụ trực tiếp. |
+| **`/cancel`** | Hủy bỏ quy trình đặt mua đang diễn ra bất cứ lúc nào. |
+| **`/myid`** | Xem thông tin tài khoản Telegram của bạn (User ID, Username) và trạng thái phân quyền (Khách hàng hoặc Admin). |
+
+> [!TIP]
+> **Hệ thống Đa ngôn ngữ (Bilingual System):**  
+> Lựa chọn ngôn ngữ của khách hàng được gắn và lưu vào CSDL (`users.language`). Toàn bộ menu, bảng giá, xác nhận đơn hàng, hướng dẫn chuyển khoản VietQR và tin nhắn tự động gửi tài khoản (Email, Mật khẩu, OTP 2FA, chính sách bảo hành) đều được bản địa hóa 100% theo ngôn ngữ khách đã chọn.
+
+---
+
+### 👑 2. Dành cho Quản trị viên (Admin Only Commands)
+
+> [!IMPORTANT]
+> Để sử dụng các lệnh Admin bên dưới, bạn cần lấy **Telegram ID** (qua lệnh `/myid`) và điền vào biến `ADMIN_CHAT_ID` trong file `.env`.  
+> *(Có thể cấu hình nhiều Admin, phân cách bằng dấu phẩy: `ADMIN_CHAT_ID=123456789,987654321`)*.
+
+| Câu lệnh Admin | Cú pháp & Ví dụ | Chức năng |
+| :--- | :--- | :--- |
+| **`/stock`** | `/stock` | **Báo cáo tồn kho thời gian thực:** Xem chi tiết số lượng tài khoản có sẵn để bán, số lượng đã bán và trạng thái từng gói dịch vụ. |
+| **`/addstock`** | `/addstock <ID> <email \| pass \| 2fa>` | **Nạp tài khoản trực tiếp qua Telegram & Tự động phát thông báo:**<br>• `ID`: Mã gói sản phẩm (ví dụ `1` hoặc `2`).<br>• Hỗ trợ nạp 1 hoặc hàng loạt tài khoản.<br>• **Tự động gửi thông báo hàng mới về (Restock Alert)** kèm ảnh gói và nút **[ ⚡ Mua ngay ]** đến tất cả khách hàng từng nhắn tin với bot (theo ngôn ngữ của từng khách).<br>*Ví dụ:*<br>`/addstock 1 user1@gmail.com \| Pass123! \| 2FA_KEY_HERE` |
+| **`/test_pay`** | `/test_pay <mã_đơn>` | **Giả lập thanh toán đơn hàng:** Kích hoạt lập tức luồng giao hàng tự động mà không cần chuyển khoản thật *(Ví dụ: `/test_pay 1`)*. |
+
+---
+
+### 🖼️ 3. Quản lý Hình ảnh Sản phẩm (Product Images)
+
+Hình ảnh minh họa sản phẩm được tự động liên kết vào kịch bản bán hàng. Bạn chỉ cần đặt file ảnh vào thư mục:
+👉 **`images/products/`** *(hoặc thư mục `images/`)*
+
+* **Ảnh chi tiết mặt hàng:**
+  * Gói Bảo hành full: `chatgpt_plus_warranty.png` (hoặc `1.png` / `1.jpg`)
+  * Gói Không bảo hành: `chatgpt_plus_no_warranty.png` (hoặc `2.png` / `2.jpg`)
+* **Ảnh bìa chung:**
+  * Đặt tên `banner.png` (hoặc `banner.jpg`): Hiển thị làm banner khi khách xem danh mục bảng giá.
+
+---
+
+### 🛠️ 4. Công cụ dòng lệnh nạp hàng (CLI Script)
+
+Ngoài việc nạp kho bằng lệnh `/addstock` trên Telegram, bạn có thể nạp tài khoản hàng loạt từ file văn bản qua terminal máy chủ (khi nạp thành công, công cụ cũng sẽ tự động gửi thông báo hàng mới về kèm nút mua ngay tới tất cả khách hàng):
+
+```powershell
+.\venv\Scripts\python.exe add_stock.py
+```
+
+---
+
 ## 🧪 Cách kiểm tra (Test) tự động trả hàng
 
 ### Cách 1: Test ngay trong chat Telegram bằng lệnh `/test_pay`
@@ -115,5 +171,6 @@ curl.exe -X POST http://127.0.0.1:8000/webhook/fake-payment -H "Content-Type: ap
 1. Tạo tài khoản miễn phí tại [SePay.vn](https://sepay.vn).
 2. Thêm số tài khoản ngân hàng của bạn.
 3. Cài đặt Webhook trên SePay trỏ về:
-   `https://your-domain-or-ngrok.com/webhook/payment`
+   `https://telebotgpt.neitman.id.vn/webhook/payment`
 4. Mỗi khi khách chuyển tiền thật quét QR, SePay sẽ bắn webhook và bot tự động gửi hàng cho khách sau 1-2 giây!
+

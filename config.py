@@ -52,6 +52,71 @@ def is_admin_user(user_id: int) -> bool:
     return user_id in get_admin_ids()
 
 
+# Product Images Directories
+IMAGES_DIR: Path = BASE_DIR / "images" / "products"
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+IMAGES_ROOT_DIR: Path = BASE_DIR / "images"
+
+
+def get_product_image(product_id: int, product_name: str = "") -> Path | None:
+    """Find a corresponding product image by ID or filename stem.
+    
+    Searches both `images/products/` and `images/`.
+    Supports formats: .png, .jpg, .jpeg, .webp
+    Priority:
+    1. By ID: e.g. '1.png', '2.jpg'
+    2. By keywords:
+       - 'bảo hành full' -> 'chatgpt_plus_warranty.png'
+       - 'không bảo hành' -> 'chatgpt_plus_no_warranty.png'
+    """
+    search_dirs = [IMAGES_DIR, IMAGES_ROOT_DIR]
+    extensions = (".png", ".jpg", ".jpeg", ".webp")
+
+    # 1. Match by product ID
+    for folder in search_dirs:
+        for ext in extensions:
+            candidate = folder / f"{product_id}{ext}"
+            if candidate.is_file():
+                return candidate
+
+    # 2. Match by keyword in product name
+    norm_name = product_name.lower()
+    keyword_map = {
+        "bảo hành full": "chatgpt_plus_warranty",
+        "không bảo hành": "chatgpt_plus_no_warranty",
+        "full": "chatgpt_plus_warranty",
+        "plus": "chatgpt_plus_warranty",
+    }
+    for kw, stem in keyword_map.items():
+        if kw in norm_name:
+            for folder in search_dirs:
+                for ext in extensions:
+                    candidate = folder / f"{stem}{ext}"
+                    if candidate.is_file():
+                        return candidate
+
+    # 3. Default product fallback
+    for folder in search_dirs:
+        for ext in extensions:
+            candidate = folder / f"default{ext}"
+            if candidate.is_file():
+                return candidate
+
+    return None
+
+
+def get_store_banner() -> Path | None:
+    """Find the general store banner if provided."""
+    search_dirs = [IMAGES_DIR, IMAGES_ROOT_DIR]
+    for folder in search_dirs:
+        for ext in (".png", ".jpg", ".jpeg", ".webp"):
+            for name in ("banner", "store_banner", "default"):
+                candidate = folder / f"{name}{ext}"
+                if candidate.is_file():
+                    return candidate
+    return None
+
+
 # Configuration validation
 if not TELEGRAM_TOKEN:
     raise ValueError(
@@ -59,3 +124,4 @@ if not TELEGRAM_TOKEN:
         "Please create a `.env` file in the project root (see `.env.example`) "
         "and define your Telegram bot token obtained from @BotFather."
     )
+

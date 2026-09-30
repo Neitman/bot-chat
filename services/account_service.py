@@ -69,7 +69,7 @@ class AccountService:
             Dict containing parsed fields, or None if line is blank.
         """
         raw = line.strip()
-        if not raw:
+        if not raw or raw.startswith(("#", "//")):
             return None
 
         delimiter = "|" if "|" in raw else (":" if ":" in raw else None)
@@ -197,7 +197,11 @@ class AccountService:
         if not product:
             raise ValueError(f"Sản phẩm với ID #{product_id} không tồn tại.")
 
-        lines = [line.strip() for line in text_content.strip().splitlines() if line.strip()]
+        lines = [
+            line.strip()
+            for line in text_content.strip().splitlines()
+            if line.strip() and not line.strip().startswith(("#", "//"))
+        ]
         added_count = 0
         duplicate_count = 0
         error_lines = []
@@ -404,34 +408,77 @@ class AccountService:
         db.flush()
 
     @staticmethod
+    def get_product_stats(db: Session, product_id: int) -> dict:
+        """Get real-time stock and sales statistics for a specific product.
+        
+        Calculates:
+        - available_stock: Count of AVAILABLE accounts in product_accounts or Product.stock_quantity.
+        - sold_count: Total units sold through completed orders (Order.status='PAID') or SOLD accounts.
+        - revenue: Estimated total revenue from sold units.
+        """
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            return {
+                "product_id": product_id,
+                "product_name": "Unknown",
+                "price": 0,
+                "available_stock": 0,
+                "sold_count": 0,
+                "revenue": 0,
+                "is_active": False,
+            }
+
+        # 1. Available Stock
+        has_managed = (
+            db.query(func.count(ProductAccount.id))
+            .filter(ProductAccount.product_id == product_id)
+            .scalar()
+            or 0
+        )
+        if has_managed > 0:
+            avail = (
+                db.query(func.count(ProductAccount.id))
+                .filter(ProductAccount.product_id == product_id, ProductAccount.status == "AVAILABLE")
+                .scalar()
+                or 0
+            )
+        else:
+            avail = product.stock_quantity
+
+        # 2. Sold Count (accurate count from actual PAID orders and SOLD accounts)
+        sold_orders = (
+            db.query(func.coalesce(func.sum(OrderItem.quantity), 0))
+            .join(Order, Order.id == OrderItem.order_id)
+            .filter(OrderItem.product_id == product_id, Order.status == "PAID")
+            .scalar()
+            or 0
+        )
+        sold_accounts = (
+            db.query(func.count(ProductAccount.id))
+            .filter(ProductAccount.product_id == product_id, ProductAccount.status == "SOLD")
+            .scalar()
+            or 0
+        )
+        sold = max(int(sold_orders), int(sold_accounts))
+        revenue = sold * product.price
+
+        return {
+            "product_id": product_id,
+            "product_name": product.name,
+            "price": product.price,
+            "available_stock": avail,
+            "sold_count": sold,
+            "revenue": revenue,
+            "is_active": product.is_active,
+        }
+
+    @staticmethod
     def get_stock_summary(db: Session) -> list[dict]:
-        """Get inventory overview for all active products."""
+        """Get inventory overview for all active and registered products."""
         products = db.query(Product).order_by(Product.id.asc()).all()
         summary = []
         for p in products:
-            avail = (
-                db.query(func.count(ProductAccount.id))
-                .filter(ProductAccount.product_id == p.id, ProductAccount.status == "AVAILABLE")
-                .scalar()
-                or 0
-            )
-            sold = (
-                db.query(func.count(ProductAccount.id))
-                .filter(ProductAccount.product_id == p.id, ProductAccount.status == "SOLD")
-                .scalar()
-                or 0
-            )
-            summary.append(
-                {
-                    "product_id": p.id,
-                    "product_name": p.name,
-                    "price": p.price,
-                    "available_stock": avail,
-                    "sold_count": sold,
-                    "total_stock_setting": p.stock_quantity,
-                    "is_active": p.is_active,
-                }
-            )
+            summary.append(AccountService.get_product_stats(db, p.id))
         return summary
 
     @staticmethod
@@ -440,21 +487,59 @@ class AccountService:
         accounts: list[ProductAccount],
         item_name: str,
     ) -> str:
-        """Format customer delivery message containing real account credentials."""
+        """Format customer delivery message containing real account credentials in user's language."""
         order_id = order.id
         total_amount = order.total_amount
+        lang = getattr(order.user, "language", "vi") or "vi"
+        is_en = lang == "en"
 
-        # Check if test package
-        if "test" in item_name.lower() and not accounts:
+        is_warranty_full = "Bảo hành full" in item_name or "full" in item_name.lower()
+        if is_en:
+            if is_warranty_full:
+                warranty_text = (
+                    "🛡️ <b>30-DAY FULL REPLACEMENT WARRANTY:</b>\n"
+                    "• 1-to-1 immediate replacement guaranteed for 30 full days.\n"
+                    "• 24/7 technical support: @AdminSupport\n"
+                )
+            else:
+                warranty_text = (
+                    "⚠️ <b>USAGE NOTICE:</b>\n"
+                    "• Dedicated private account. Please do not modify the original email.\n"
+                    "• Contact support if you need login assistance.\n"
+                )
+
+            if accounts:
+                account_blocks = []
+                for i, acc in enumerate(accounts, start=1):
+                    prefix = f"🔹 <b>ACCOUNT #{i}:</b>\n" if len(accounts) > 1 else ""
+                    acc_lines = [prefix] if prefix else []
+                    acc_lines.append(f"• 📧 <b>Email:</b> <code>{acc.account}</code>")
+                    if acc.password:
+                        acc_lines.append(f"• 🔑 <b>Password:</b> <code>{acc.password}</code>")
+                    if acc.two_factor:
+                        acc_lines.append(f"• 🔐 <b>2FA Secret Key:</b> <code>{acc.two_factor}</code>")
+                    account_blocks.append("\n".join(acc_lines))
+                credentials_text = "\n\n".join(account_blocks)
+            else:
+                credentials_text = (
+                    "⚠️ <i>Your account is being prepared by our technical staff.\n"
+                    "Please send your order ID to @AdminSupport to receive your account immediately!</i>"
+                )
+
             return (
-                f"🎉 <b>XÁC NHẬN THANH TOÁN THÀNH CÔNG ĐƠN TEST #{order_id}!</b>\n\n"
-                f"🤖 <b>Mặt hàng:</b> <b>{item_name}</b>\n"
-                f"💵 <b>Số tiền đã nhận:</b> <b>{total_amount:,.0f} VND</b>\n"
+                f"🎉 <b>PAYMENT CONFIRMED FOR ORDER #{order_id}!</b>\n\n"
+                f"🤖 <b>Plan:</b> <b>{item_name}</b>\n"
+                f"💵 <b>Amount Received:</b> <b>{total_amount:,.0f} VND</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"✅ Hệ thống Webhook và kiểm tra thanh toán hoạt động hoàn hảo 100%!"
+                f"📦 <b>YOUR ACCOUNT CREDENTIALS:</b>\n\n"
+                f"{credentials_text}\n\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🌐 <b>LOGIN AT:</b> https://chatgpt.com\n\n"
+                f"{warranty_text}\n"
+                f"Thank you for choosing ChatGPT Plus Store! Enjoy your premium AI experience."
             )
 
-        is_warranty_full = "Bảo hành full" in item_name
+        # Vietnamese (Default)
         if is_warranty_full:
             warranty_text = (
                 "🛡️ <b>CHÍNH SÁCH BẢO HÀNH FULL 30 NGÀY:</b>\n"
@@ -468,36 +553,25 @@ class AccountService:
                 "• Liên hệ hỗ trợ nếu cần hướng dẫn đăng nhập.\n"
             )
 
-        # Build credentials section
         if accounts:
             account_blocks = []
             for i, acc in enumerate(accounts, start=1):
                 prefix = f"🔹 <b>TÀI KHOẢN #{i}:</b>\n" if len(accounts) > 1 else ""
-                acc_lines = [prefix]
+                acc_lines = [prefix] if prefix else []
                 acc_lines.append(f"• 📧 <b>Email:</b> <code>{acc.account}</code>")
                 if acc.password:
                     acc_lines.append(f"• 🔑 <b>Mật khẩu:</b> <code>{acc.password}</code>")
-
                 if acc.two_factor:
                     acc_lines.append(f"• 🔐 <b>Mã 2FA Secret:</b> <code>{acc.two_factor}</code>")
-                    totp_code = AccountService.get_totp_code(acc.two_factor)
-                    if totp_code:
-                        acc_lines.append(f"• ⚡ <b>Mã OTP hiện tại (30s):</b> <code>{totp_code}</code>")
-                    acc_lines.append(
-                        "• 📲 <i>Lấy mã OTP mới: Vào <b>https://2fa.live</b> dán mã 2FA Secret trên để lấy mã 6 số.</i>"
-                    )
-
                 account_blocks.append("\n".join(acc_lines))
-
             credentials_text = "\n\n".join(account_blocks)
         else:
-            # Fallback if no accounts were in stock
             credentials_text = (
                 "⚠️ <i>Tài khoản của bạn đang được kỹ thuật viên chuẩn bị kích hoạt thủ công.\n"
                 "Vui lòng gửi mã đơn hàng cho @AdminSupport để nhận tài khoản ngay lập tức!</i>"
             )
 
-        message = (
+        return (
             f"🎉 <b>THANH TOÁN THÀNH CÔNG ĐƠN HÀNG #{order_id}!</b>\n\n"
             f"🤖 <b>Gói dịch vụ:</b> <b>{item_name}</b>\n"
             f"💵 <b>Số tiền đã nhận:</b> <b>{total_amount:,.0f} VND</b>\n"
@@ -509,4 +583,3 @@ class AccountService:
             f"{warranty_text}\n"
             f"Cảm ơn bạn đã tin tưởng ủng hộ shop! Chúc bạn có trải nghiệm tuyệt vời cùng ChatGPT Plus."
         )
-        return message

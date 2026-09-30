@@ -21,7 +21,10 @@ from telegram.warnings import PTBUserWarning
 # Filter PTB conversation warning for mixed callbacks and text handlers
 warnings.filterwarnings("ignore", category=PTBUserWarning)
 
+from config import get_product_image
 from database.database import get_db
+from services.account_service import AccountService
+from services.i18n import get_user_lang, t
 from services.order_service import OrderService
 
 logger = logging.getLogger(__name__)
@@ -34,23 +37,43 @@ async def start_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Entry point for the checkout conversation.
 
     Triggered either by `/buy` command or clicking "👉 Mua [Sản phẩm]"
-    from the product list inline buttons.
+    from product list or restock notification inline buttons.
     """
+    effective_user = update.effective_user
+    if effective_user:
+        with get_db() as db:
+            OrderService.get_or_create_user(
+                db=db,
+                telegram_id=effective_user.id,
+                full_name=effective_user.full_name or effective_user.first_name,
+            )
+
     query = update.callback_query
 
     # If triggered via callback query (e.g. buy_prod_1)
     if query and query.data and query.data.startswith("buy_prod_"):
-        await query.answer()
+        try:
+            await query.answer()
+        except Exception:
+            pass
         product_id = int(query.data.split("_")[-1])
 
         with get_db() as db:
             product = OrderService.get_product_by_id(db, product_id)
+            user_id = query.from_user.id if query and query.from_user else (update.effective_user.id if update.effective_user else 0)
+            lang = get_user_lang(db, user_id)
 
         if not product or not product.is_active or product.stock_quantity <= 0:
-            await query.edit_message_text(
-                "Rất tiếc, sản phẩm này hiện đã hết hàng hoặc ngừng kinh doanh. "
-                "Gõ /buy để chọn sản phẩm khác hoặc /start để về menu."
-            )
+            out_of_stock_msg = t("catalog_empty", lang)
+            try:
+                await query.edit_message_text(out_of_stock_msg)
+            except Exception:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                if query.message:
+                    await context.bot.send_message(chat_id=query.message.chat_id, text=out_of_stock_msg)
             return ConversationHandler.END
 
         # Store product state in context.user_data
@@ -59,15 +82,49 @@ async def start_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "product_name": product.name,
             "price": product.price,
             "max_stock": product.stock_quantity,
+            "lang": lang,
         }
 
-        await query.edit_message_text(
-            f"Bạn đã chọn: <b>{product.name}</b>\n"
-            f"💰 Giá đơn vị: <b>{product.price:,.0f} VND</b>\n"
-            f"📦 Số lượng còn trong kho: <b>{product.stock_quantity}</b>\n\n"
-            "Vui lòng nhập <b>số lượng</b> bạn muốn mua (hoặc gõ /cancel để hủy):",
-            parse_mode="HTML",
+        stats = AccountService.get_product_stats(db, product.id)
+        checkout_text = t(
+            "checkout_selected",
+            lang,
+            name=product.name,
+            price=product.price,
+            stock=stats["available_stock"],
+            sold=stats["sold_count"],
         )
+
+        img_path = get_product_image(product.id, product.name)
+        if img_path and img_path.is_file():
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            with open(img_path, "rb") as photo_file:
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id,
+                    photo=photo_file,
+                    caption=checkout_text,
+                    parse_mode="HTML",
+                )
+        else:
+            try:
+                await query.edit_message_text(
+                    checkout_text,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                if query.message:
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=checkout_text,
+                        parse_mode="HTML",
+                    )
         return ENTER_QUANTITY
 
     # If triggered via /buy command: list available products
@@ -122,21 +179,46 @@ async def select_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return ConversationHandler.END
 
+    user_id = query.from_user.id if query and query.from_user else (update.effective_user.id if update.effective_user else 0)
+    lang = get_user_lang(db, user_id)
+
     # Update state in user_data
     context.user_data["checkout"] = {
         "product_id": product.id,
         "product_name": product.name,
         "price": product.price,
         "max_stock": product.stock_quantity,
+        "lang": lang,
     }
 
-    await query.edit_message_text(
-        f"Bạn đã chọn: <b>{product.name}</b>\n"
-        f"💰 Đơn giá: <b>{product.price:,.0f} VND</b>\n"
-        f"📦 Kho còn: <b>{product.stock_quantity}</b>\n\n"
-        "Vui lòng nhập <b>số lượng</b> bạn muốn mua (hoặc gõ /cancel để hủy):",
-        parse_mode="HTML",
+    stats = AccountService.get_product_stats(db, product.id)
+    checkout_text = t(
+        "checkout_selected",
+        lang,
+        name=product.name,
+        price=product.price,
+        stock=stats["available_stock"],
+        sold=stats["sold_count"],
     )
+
+    img_path = get_product_image(product.id, product.name)
+    if img_path and img_path.is_file():
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        with open(img_path, "rb") as photo_file:
+            await context.bot.send_photo(
+                chat_id=query.message.chat_id,
+                photo=photo_file,
+                caption=checkout_text,
+                parse_mode="HTML",
+            )
+    else:
+        await query.edit_message_text(
+            checkout_text,
+            parse_mode="HTML",
+        )
     return ENTER_QUANTITY
 
 
@@ -156,23 +238,20 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     text = update.message.text.strip()
 
+    lang = checkout_data.get("lang", "vi")
+
     # Validate integer quantity
     try:
         quantity = int(text)
         if quantity <= 0:
             raise ValueError
     except ValueError:
-        await update.message.reply_text(
-            "⚠️ Số lượng không hợp lệ! Vui lòng nhập một số nguyên dương lớn hơn 0 (ví dụ: 1, 2, 5):"
-        )
+        await update.message.reply_text(t("invalid_quantity", lang))
         return ENTER_QUANTITY
 
     max_stock = checkout_data.get("max_stock", 0)
     if quantity > max_stock:
-        await update.message.reply_text(
-            f"⚠️ Số lượng bạn yêu cầu ({quantity}) vượt quá số lượng trong kho ({max_stock}).\n"
-            f"Vui lòng nhập lại số lượng <= {max_stock}:"
-        )
+        await update.message.reply_text(t("quantity_exceed", lang, stock=max_stock))
         return ENTER_QUANTITY
 
     # Update context with valid quantity and total amount
@@ -184,19 +263,18 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Build confirmation UI
     confirm_keyboard = [
         [
-            InlineKeyboardButton("✅ Xác nhận đặt hàng", callback_data="confirm_order_yes"),
-            InlineKeyboardButton("❌ Hủy bỏ", callback_data="confirm_order_no"),
+            InlineKeyboardButton(t("btn_confirm_yes", lang), callback_data="confirm_order_yes"),
+            InlineKeyboardButton(t("btn_confirm_no", lang), callback_data="confirm_order_no"),
         ]
     ]
 
-    summary_text = (
-        "🧾 <b>XÁC NHẬN THÔNG TIN ĐƠN HÀNG:</b>\n\n"
-        f"• Sản phẩm: <b>{checkout_data['product_name']}</b>\n"
-        f"• Đơn giá: <b>{price:,.0f} VND</b>\n"
-        f"• Số lượng: <b>{quantity}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"💵 <b>Tổng thanh toán: {total_amount:,.0f} VND</b>\n\n"
-        "Bạn có đồng ý tiến hành đặt đơn hàng này không?"
+    summary_text = t(
+        "confirm_order_summary",
+        lang,
+        name=checkout_data["product_name"],
+        qty=quantity,
+        price=price,
+        total=total_amount,
     )
 
     await update.message.reply_html(
@@ -225,9 +303,11 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return ConversationHandler.END
 
+    lang = checkout_data.get("lang", "vi")
+
     if query.data == "confirm_order_no":
         context.user_data.pop("checkout", None)
-        await query.edit_message_text("❌ Đã hủy đặt hàng. Gõ /start để quay lại trang chủ.")
+        await query.edit_message_text(t("order_cancelled", lang))
         return ConversationHandler.END
 
     if query.data == "confirm_order_yes":
@@ -256,20 +336,17 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
             # Payment instruction buttons
             payment_keyboard = [
-                [InlineKeyboardButton("✅ Tôi đã chuyển khoản xong", callback_data=f"paid_order_{order_id}")],
-                [InlineKeyboardButton("🔙 Quay lại menu", callback_data="menu_back")],
+                [InlineKeyboardButton(t("btn_paid_confirm", lang), callback_data=f"paid_order_{order_id}")],
+                [InlineKeyboardButton(t("btn_back", lang), callback_data="menu_back")],
             ]
 
-            caption = (
-                "🎉 <b>ĐẶT HÀNG THÀNH CÔNG!</b>\n\n"
-                f"• Mã đơn hàng: <b>#{order_id}</b>\n"
-                f"• Sản phẩm: <b>{checkout_data['product_name']}</b> x {checkout_data['quantity']}\n"
-                f"• Tổng số tiền: <b>{total_amount:,.0f} VND</b>\n"
-                f"• Trạng thái: <i>PENDING (Chờ thanh toán)</i>\n\n"
-                "📲 <b>HƯỚNG DẪN THANH TOÁN QUA VIETQR:</b>\n"
-                "1. Mở ứng dụng ngân hàng hoặc ví điện tử bất kỳ.\n"
-                "2. Quét mã QR trên để tự động điền STK, số tiền và nội dung chuyển khoản.\n"
-                "3. Sau khi chuyển xong, bấm nút <b>'Tôi đã chuyển khoản xong'</b> bên dưới để shop đối soát."
+            caption = t(
+                "order_created_caption",
+                lang,
+                order_id=order_id,
+                name=checkout_data["product_name"],
+                qty=checkout_data["quantity"],
+                total=total_amount,
             )
 
             # Remove previous confirmation text message and send photo with QR
@@ -288,10 +365,10 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
         except ValueError as err:
             logger.warning("Order validation failed: %s", err)
-            await query.edit_message_text(f"⚠️ Không thể tạo đơn hàng: {err}")
+            await query.edit_message_text(t("order_create_failed", lang, err=err))
         except Exception as exc:
             logger.error("Unexpected error during checkout: %s", exc)
-            await query.edit_message_text("❌ Đã xảy ra lỗi hệ thống khi xử lý đơn hàng. Vui lòng thử lại sau.")
+            await query.edit_message_text(t("system_error", lang))
 
         return ConversationHandler.END
 
@@ -309,14 +386,10 @@ async def payment_confirm_callback_handler(update: Update, context: ContextTypes
 
     with get_db() as db:
         OrderService.update_order_status(db, order_id=order_id, new_status="WAITING_CONFIRMATION")
+        user_lang = get_user_lang(db, update.effective_user.id if update.effective_user else None)
 
-    thank_you_text = (
-        f"✅ <b>ĐÃ GHI NHẬN THÔNG BÁO THANH TOÁN CHO ĐƠN #{order_id}!</b>\n\n"
-        "Cảm ơn bạn! Shop đã ghi nhận thông báo chuyển khoản của bạn.\n"
-        "Nhân viên sẽ kiểm tra giao dịch và liên hệ giao hàng đến bạn trong thời gian sớm nhất.\n\n"
-        "Gõ /start để tiếp tục mua sắm hoặc kiểm tra đơn hàng."
-    )
-    keyboard = [[InlineKeyboardButton("🔙 Về menu chính", callback_data="menu_back")]]
+    thank_you_text = t("paid_notification_received", user_lang, order_id=order_id)
+    keyboard = [[InlineKeyboardButton(t("btn_back", user_lang), callback_data="menu_back")]]
 
     if update.effective_chat:
         await context.bot.send_message(
@@ -331,9 +404,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Fallback handler for `/cancel` command."""
     context.user_data.pop("checkout", None)
     if update.message:
-        await update.message.reply_text(
-            "🚫 Bạn đã hủy quy trình đặt hàng thành công.\nGõ /start để trở về menu chính hoặc /buy để mua hàng."
-        )
+        with get_db() as db:
+            user_lang = get_user_lang(db, update.effective_user.id if update.effective_user else None)
+        await update.message.reply_text(t("order_cancelled_prompt", user_lang))
     return ConversationHandler.END
 
 
@@ -341,9 +414,9 @@ async def cancel_from_query(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """Cancel checkout triggered from an inline button."""
     context.user_data.pop("checkout", None)
     if update.callback_query:
-        await update.callback_query.edit_message_text(
-            "🚫 Bạn đã hủy quy trình đặt hàng.\nGõ /start để trở về menu chính hoặc /buy để mua lại."
-        )
+        with get_db() as db:
+            user_lang = get_user_lang(db, update.effective_user.id if update.effective_user else None)
+        await update.callback_query.edit_message_text(t("order_cancelled_prompt", user_lang))
     return ConversationHandler.END
 
 
