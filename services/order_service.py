@@ -189,6 +189,12 @@ class OrderService:
         if len(existing_products) == 0:
             chatgpt_plans = [
                 Product(
+                    name="[TEST] Gói Test Webhook (2.000đ)",
+                    price=2000,
+                    stock_quantity=9999,
+                    is_active=True,
+                ),
+                Product(
                     name="ChatGPT Plus 1 Tháng (Bảo hành full)",
                     price=275000,
                     stock_quantity=999,
@@ -203,3 +209,20 @@ class OrderService:
             ]
             db.add_all(chatgpt_plans)
             db.flush()
+        else:
+            # Ensure the test product exists
+            test_prod = db.query(Product).filter(Product.name.like("%Test%")).first()
+            if not test_prod:
+                test_prod = Product(
+                    name="[TEST] Gói Test Webhook (2.000đ)",
+                    price=2000,
+                    stock_quantity=9999,
+                    is_active=True,
+                )
+                db.add(test_prod)
+                db.flush()
+            else:
+                test_prod.price = 2000
+                test_prod.is_active = True
+                test_prod.stock_quantity = 9999
+                db.flush()

@@ -48,6 +48,21 @@ class PaymentService:
         order_id = order.id
         total_amount = order.total_amount
 
+        # Check if this is a test package
+        if "test" in item_name.lower():
+            return (
+                f"🎉 <b>XÁC NHẬN THANH TOÁN THÀNH CÔNG ĐƠN HÀNG TEST #{order_id}!</b>\n\n"
+                f"🤖 <b>Mặt hàng:</b> <b>{item_name}</b>\n"
+                f"💵 <b>Số tiền đã nhận:</b> <b>{total_amount:,.0f} VND</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"✅ <b>KẾT QUẢ KIỂM TRA WEBHOOK & THANH TOÁN: HOÀN TẤT THÀNH CÔNG 100%!</b>\n\n"
+                f"• 📡 <b>Kết nối SePay Webhook:</b> Hoạt động chính xác.\n"
+                f"• 💰 <b>Biến động số dư:</b> Đã khớp đơn #{order_id} thành công.\n"
+                f"• ⚡ <b>Trạng thái đơn:</b> Đã chuyển sang <b>PAID (Đã thanh toán)</b>.\n"
+                f"• 🎁 <b>Phản hồi tự động:</b> Kích hoạt ngay lập tức sau khi tiền vào.\n\n"
+                f"<i>Hệ thống bot và Webhook của bạn đã sẵn sàng 100% để phục vụ khách hàng!</i>"
+            )
+
         is_warranty_full = "Bảo hành full" in item_name
 
         if is_warranty_full:

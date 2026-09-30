@@ -90,7 +90,8 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             keyboard = [[InlineKeyboardButton("🔙 Quay lại menu", callback_data="menu_back")]]
         else:
             text = (
-                "🤖 <b>BẢNG GIÁ DỊCH VỤ CHATGPT PLUS:</b>\n\n"
+                "🤖 <b>BẢNG GIÁ DỊCH VỤ:</b>\n\n"
+                "• <b>🧪 [TEST] Gói Test Webhook (2.000đ)</b>: Dành cho test nạp tự động.\n"
                 "• <b>Gói Bảo Hành Full (275.000đ)</b>: Bảo hành 1 đổi 1 trọn vẹn 30 ngày.\n"
                 "• <b>Gói Không Bảo Hành (145.000đ)</b>: Giá siêu tiết kiệm, tài khoản dùng riêng.\n\n"
                 "<i>Chọn gói bạn muốn mua bên dưới:</i>\n"

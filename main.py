@@ -78,9 +78,12 @@ async def run_application() -> None:
     webhook = WebhookServer(bot=application.bot)
     runner = web.AppRunner(webhook.app)
     await runner.setup()
-    site = web.TCPSite(runner, host=WEBHOOK_HOST, port=WEBHOOK_PORT)
+    # Using host=None binds to all interfaces on both IPv4 (0.0.0.0) and IPv6 (::)
+    # ensuring compatibility with localhost, 127.0.0.1, and [::1] on Windows
+    listen_host = None if WEBHOOK_HOST in ("0.0.0.0", "") else WEBHOOK_HOST
+    site = web.TCPSite(runner, host=listen_host, port=WEBHOOK_PORT)
     await site.start()
-    logger.info("Payment Webhook server listening on http://%s:%s", WEBHOOK_HOST, WEBHOOK_PORT)
+    logger.info("Payment Webhook server listening on port %s (IPv4 & IPv6)", WEBHOOK_PORT)
     logger.info("Ready to receive bank transfer notifications from SePay / PayOS / local test.")
 
     # 7. Keep running until termination signal

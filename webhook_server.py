@@ -35,6 +35,7 @@ class WebhookServer:
 
     async def health_check(self, request: web.Request) -> web.Response:
         """Health check endpoint."""
+        logger.info(">>> Nhận request kiểm tra health_check từ: %s", request.remote)
         return web.json_response({
             "status": "online",
             "service": "Telegram Shop Bot Payment Webhook",
@@ -45,9 +46,10 @@ class WebhookServer:
         """Handle incoming bank transaction webhooks (SePay / PayOS format)."""
         # 1. Verify Authorization Header if SEPAY_API_KEY is configured
         if SEPAY_API_KEY:
-            auth_header = request.headers.get("Authorization", "")
-            if not auth_header.endswith(SEPAY_API_KEY):
-                logger.warning("Unauthorized webhook request rejected.")
+            auth_header = request.headers.get("Authorization", "").strip()
+            # Compatible with "Apikey <KEY>", "Bearer <KEY>", or exact key
+            if not auth_header or SEPAY_API_KEY not in auth_header:
+                logger.warning("Unauthorized webhook request rejected. Provided auth header: %s", auth_header)
                 return web.json_response({"error": "Unauthorized"}, status=401)
 
         try:
