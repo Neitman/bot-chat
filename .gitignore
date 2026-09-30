@@ -32,13 +32,13 @@ venv/
 ENV/
 env/
 
-# Environment variables & secrets
-.env
+# Environment variables & secrets (Allowed for private repo synchronization)
+# .env
 
-# Database files
-*.db
-*.sqlite
-*.sqlite3
+# Database files (Allowed for private repo synchronization)
+# *.db
+# *.sqlite
+# *.sqlite3
 
 # IDE & Editor settings
 .vscode/

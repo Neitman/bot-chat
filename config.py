@@ -7,6 +7,7 @@ are properly set before the application boots.
 
 import os
 from pathlib import Path
+import re
 from dotenv import load_dotenv
 
 # Base project directory
@@ -32,19 +33,43 @@ BANK_ACCOUNT_NAME: str = os.getenv("BANK_ACCOUNT_NAME", "CHU SHOP").strip().uppe
 WEBHOOK_HOST: str = os.getenv("WEBHOOK_HOST", "0.0.0.0").strip()
 WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8000").strip())
 SEPAY_API_KEY: str = os.getenv("SEPAY_API_KEY", "").strip()
-ADMIN_CHAT_ID: str = os.getenv("ADMIN_CHAT_ID", "").strip()
 
 
 def get_admin_ids() -> list[int]:
-    """Return list of allowed admin Telegram user IDs parsed from ADMIN_CHAT_ID."""
-    if not ADMIN_CHAT_ID:
-        return []
-    ids = []
-    for part in ADMIN_CHAT_ID.split(","):
+    """Return list of allowed admin Telegram user IDs parsed from environment variables.
+
+    Supports:
+    - Numbered environment variables: ADMIN_CHAT_ID_1, ADMIN_CHAT_ID_2, ...
+    - Standard variables (single or comma-separated): ADMIN_CHAT_ID, ADMIN_CHAT_IDS
+    """
+    raw_ids: list[str] = []
+
+    # 1. Numbered variables: ADMIN_CHAT_ID_1, ADMIN_CHAT_ID_2, ...
+    for key, value in os.environ.items():
+        if key.startswith("ADMIN_CHAT_ID_"):
+            val = value.strip()
+            if val:
+                raw_ids.extend(re.split(r"[,;\s|]+", val))
+
+    # 2. Standard variables: ADMIN_CHAT_ID, ADMIN_CHAT_IDS
+    for var_name in ("ADMIN_CHAT_ID", "ADMIN_CHAT_IDS"):
+        val = os.getenv(var_name, "").strip()
+        if val:
+            raw_ids.extend(re.split(r"[,;\s|]+", val))
+
+    ids: list[int] = []
+    for part in raw_ids:
         part = part.strip()
         if part.isdigit() or (part.startswith("-") and part[1:].isdigit()):
-            ids.append(int(part))
+            int_id = int(part)
+            if int_id not in ids:
+                ids.append(int_id)
     return ids
+
+
+# Export ADMIN_CHAT_ID as comma-separated string for backwards-compatibility
+_loaded_admin_ids = get_admin_ids()
+ADMIN_CHAT_ID: str = ",".join(str(i) for i in _loaded_admin_ids)
 
 
 def is_admin_user(user_id: int) -> bool:

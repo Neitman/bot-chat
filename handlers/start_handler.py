@@ -34,7 +34,7 @@ def admin_required(func):
                 "⚠️ <b>CHƯA CẤU HÌNH ADMIN_CHAT_ID!</b>\n\n"
                 f"ID Telegram của bạn là: <code>{user.id}</code>\n\n"
                 "Để sử dụng lệnh quản trị và bảo mật bot, vui lòng thêm dòng sau vào file <code>.env</code>:\n"
-                f"<code>ADMIN_CHAT_ID={user.id}</code>\n\n"
+                f"<code>ADMIN_CHAT_ID_1={user.id}</code> (hoặc <code>ADMIN_CHAT_ID_2=...</code>)\n\n"
                 "Sau khi lưu, khởi động lại bot để kích hoạt bảo vệ an toàn."
             )
             if update.message:
@@ -545,7 +545,7 @@ async def myid_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not is_adm:
         msg += (
             f"\n💡 <i>Nếu bạn là chủ shop, hãy sao chép ID <code>{user.id}</code> và thêm vào file <code>.env</code>:\n"
-            f"<code>ADMIN_CHAT_ID={user.id}</code></i>"
+            f"<code>ADMIN_CHAT_ID_1={user.id}</code> (hoặc <code>ADMIN_CHAT_ID_2={user.id}</code>)</i>"
         )
 
     await update.message.reply_html(msg)

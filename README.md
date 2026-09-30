@@ -35,7 +35,7 @@ bot-chat/
 | ID | Gói dịch vụ | Giá (VND) | Tồn kho | Mô tả & Bảo hành |
 | :---: | :--- | :---: | :---: | :--- |
 | **1** | **ChatGPT Plus 1 Tháng (Bảo hành full)** | **275.000đ** | 999 | Bảo hành 1 đổi 1 trọn vẹn 30 ngày |
-| **2** | **ChatGPT Plus 1 Tháng (Không bảo hành)** | **145.000đ** | 999 | Giá tiết kiệm, tài khoản dùng riêng |
+| **2** | **ChatGPT Plus 1 Tháng (Không bảo hành)** | **150.000đ** | 999 | Giá tiết kiệm, tài khoản dùng riêng |
 
 ---
 

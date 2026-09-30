@@ -16,7 +16,7 @@ DEFAULT_LANG = "vi"
 STRINGS = {
     "vi": {
         # Language Selection
-        "choose_lang_title": "👋 <b>Chào mừng bạn đến với ChatGPT Plus Store!</b>\n\nVui lòng chọn ngôn ngữ để tiếp tục:\nPlease choose your language to continue:",
+        "choose_lang_title": "👋 <b>Chào mừng bạn đến với AI Store!</b>\n\nVui lòng chọn ngôn ngữ để tiếp tục:\nPlease choose your language to continue:",
         "lang_vi_btn": "🇻🇳 Tiếng Việt",
         "lang_en_btn": "🇬🇧 English",
         "lang_switched": "✅ Đã chuyển sang <b>Tiếng Việt</b> thành công!",
@@ -24,18 +24,18 @@ STRINGS = {
         # Main Menu
         "welcome": (
             "Xin chào, <b>{name}</b>! 👋\n\n"
-            "Chào mừng bạn đến với <b>ChatGPT Plus Store</b> 🤖\n"
-            "Chuyên cung cấp gói tài khoản ChatGPT Plus uy tín, tự động giao hàng 24/7.\n\n"
+            "Chào mừng bạn đến với <b>AI Store</b> 🤖\n"
+            "Chuyên cung cấp gói tài khoản AI uy tín, tự động giao hàng 24/7.\n\n"
             "Vui lòng chọn chức năng bên dưới để bắt đầu:"
         ),
-        "btn_products": "🤖 Xem các gói ChatGPT Plus",
+        "btn_products": "🤖 Xem các gói AI",
         "btn_cart": "🛒 Đơn hàng của tôi",
         "btn_support": "📞 Hỗ trợ & Bảo hành",
         "btn_change_lang": "🌐 Đổi ngôn ngữ (Language)",
         "btn_back": "🔙 Quay lại menu",
         
         # Product Catalog
-        "catalog_title": "🤖 <b>BẢNG GIÁ DỊCH VỤ CHATGPT PLUS:</b>\n\n",
+        "catalog_title": "🤖 <b>BẢNG GIÁ DỊCH VỤ AI:</b>\n\n",
         "price_label": "Đơn giá",
         "policy_label": "Chính sách",
         "stock_label": "Còn lại",
@@ -50,13 +50,13 @@ STRINGS = {
         "support_text": (
             "📞 <b>TRUNG TÂM HỖ TRỢ & BẢO HÀNH</b>\n\n"
             "Nếu bạn cần hỗ trợ kích hoạt hoặc bảo hành tài khoản:\n"
-            "• Hỗ trợ Telegram: <code>@AdminSupport</code>\n"
+            "• Hỗ trợ Telegram: <code>@Neitman275</code> hoặc <code>@Huyneko</code>\n"
             "• Thời gian hỗ trợ: 08:00 - 23:00 hàng ngày\n"
             "• Cam kết hỗ trợ 1 đổi 1 nhanh chóng đối với gói Bảo hành full."
         ),
         
         # Orders / Cart
-        "no_orders": "🛒 Bạn chưa có đơn hàng nào.\nHãy chọn mua gói ChatGPT Plus để bắt đầu trải nghiệm nhé!",
+        "no_orders": "🛒 Bạn chưa có đơn hàng nào.\nHãy chọn mua gói AI để bắt đầu trải nghiệm nhé!",
         "order_history_title": "📋 <b>LỊCH SỬ ĐƠN HÀNG CỦA BẠN:</b>\n\n",
         "order_item_header": "Đơn",
         "order_total": "Tổng tiền",
@@ -70,7 +70,7 @@ STRINGS = {
         "order_account_email_label": "Email",
         "order_account_pwd_label": "Mật khẩu",
         "order_account_2fa_label": "2FA Secret",
-        "order_account_awaiting": "⚠️ <i>Đang chờ cấp tài khoản (liên hệ @AdminSupport)</i>",
+        "order_account_awaiting": "⚠️ <i>Đang chờ cấp tài khoản (liên hệ @Neitman275 hoặc @Huyneko)</i>",
         "order_account_copy_hint": "<i>(Bấm vào từng thông tin để tự động sao chép)</i>",
         
         # Checkout FSM
@@ -117,22 +117,25 @@ STRINGS = {
         "delivery_title": "🎉 <b>THANH TOÁN THÀNH CÔNG ĐƠN HÀNG #{order_id}!</b>\n\n",
         "delivery_plan": "🤖 <b>Gói dịch vụ:</b> <b>{item_name}</b>\n",
         "delivery_amount": "💵 <b>Số tiền đã nhận:</b> <b>{total_amount:,.0f} VND</b>\n━━━━━━━━━━━━━━━━━━\n",
-        "delivery_box_title": "📦 <b>THÔNG TIN TÀI KHOẢN CHATGPT PLUS CỦA BẠN:</b>\n\n",
+        "delivery_box_title": "📦 <b>THÔNG TIN TÀI KHOẢN AI CỦA BẠN:</b>\n\n",
         "delivery_email": "• 📧 Email đăng nhập: <code>{email}</code>\n",
         "delivery_password": "• 🔑 Mật khẩu: <code>{password}</code>\n",
         "delivery_2fa": "• 🛡️ Mã 2FA Secret: <code>{two_factor}</code>\n",
-        "delivery_link": "• 🌐 Link đăng nhập: https://chatgpt.com\n\n",
+        "delivery_link": (
+            "• 🌐 Link đăng nhập: https://chatgpt.com\n"
+            "• 📁 Link tài liệu & hướng dẫn: https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
+        ),
         "delivery_warranty_full": (
             "🛡️ <b>CHÍNH SÁCH BẢO HÀNH FULL 30 NGÀY:</b>\n"
             "• Bảo hành 1 đổi 1 trọn vẹn 30 ngày nếu phát sinh lỗi từ hệ thống.\n"
-            "• Hỗ trợ kỹ thuật 24/7 qua admin @AdminSupport.\n"
+            "• Hỗ trợ kỹ thuật 24/7 qua admin @Neitman275 hoặc @Huyneko.\n"
         ),
         "delivery_warranty_none": (
             "⚠️ <b>LƯU Ý SỬ DỤNG:</b>\n"
             "• Gói không bảo hành, vui lòng không đổi thông tin email gốc.\n"
             "• Tài khoản dùng riêng biệt, kích hoạt sử dụng ngay.\n"
         ),
-        "delivery_footer": "Cảm ơn bạn đã lựa chọn <b>ChatGPT Plus Store</b>! Chúc bạn có trải nghiệm tuyệt vời cùng AI.",
+        "delivery_footer": "Cảm ơn bạn đã lựa chọn <b>AI Store</b>! Chúc bạn có trải nghiệm tuyệt vời cùng AI.",
         
         # Restock Notification
         "restock_broadcast_caption": (
@@ -150,7 +153,7 @@ STRINGS = {
     
     "en": {
         # Language Selection
-        "choose_lang_title": "👋 <b>Welcome to ChatGPT Plus Store!</b>\n\nPlease choose your preferred language:\nVui lòng chọn ngôn ngữ để tiếp tục:",
+        "choose_lang_title": "👋 <b>Welcome to AI Store!</b>\n\nPlease choose your preferred language:\nVui lòng chọn ngôn ngữ để tiếp tục:",
         "lang_vi_btn": "🇻🇳 Tiếng Việt",
         "lang_en_btn": "🇬🇧 English",
         "lang_switched": "✅ Language changed to <b>English</b> successfully!",
@@ -158,18 +161,18 @@ STRINGS = {
         # Main Menu
         "welcome": (
             "Hello, <b>{name}</b>! 👋\n\n"
-            "Welcome to <b>ChatGPT Plus Store</b> 🤖\n"
-            "Providing genuine ChatGPT Plus accounts with automated 24/7 instant delivery.\n\n"
+            "Welcome to <b>AI Store</b> 🤖\n"
+            "Providing genuine AI accounts with automated 24/7 instant delivery.\n\n"
             "Please choose an option below to get started:"
         ),
-        "btn_products": "🤖 View ChatGPT Plus Plans",
+        "btn_products": "🤖 View AI Plans",
         "btn_cart": "🛒 My Orders",
         "btn_support": "📞 Support & Warranty",
         "btn_change_lang": "🌐 Change Language",
         "btn_back": "🔙 Back to Menu",
         
         # Product Catalog
-        "catalog_title": "🤖 <b>CHATGPT PLUS PRICE LIST:</b>\n\n",
+        "catalog_title": "🤖 <b>AI PRICE LIST:</b>\n\n",
         "price_label": "Price",
         "policy_label": "Warranty",
         "stock_label": "In Stock",
@@ -184,13 +187,13 @@ STRINGS = {
         "support_text": (
             "📞 <b>SUPPORT & WARRANTY CENTER</b>\n\n"
             "If you need assistance with account activation or warranty:\n"
-            "• Telegram Support: <code>@AdminSupport</code>\n"
+            "• Telegram Support: <code>@Neitman275</code> or <code>@Huyneko</code>\n"
             "• Operating Hours: 08:00 - 23:00 (GMT+7) Daily\n"
             "• Fast 1-to-1 replacement guaranteed for Full Warranty plans."
         ),
         
         # Orders / Cart
-        "no_orders": "🛒 You don't have any orders yet.\nChoose a ChatGPT Plus plan to get started!",
+        "no_orders": "🛒 You don't have any orders yet.\nChoose an AI plan to get started!",
         "order_history_title": "📋 <b>YOUR ORDER HISTORY:</b>\n\n",
         "order_item_header": "Order",
         "order_total": "Total",
@@ -204,7 +207,7 @@ STRINGS = {
         "order_account_email_label": "Email",
         "order_account_pwd_label": "Password",
         "order_account_2fa_label": "2FA Secret",
-        "order_account_awaiting": "⚠️ <i>Awaiting account assignment (contact @AdminSupport)</i>",
+        "order_account_awaiting": "⚠️ <i>Awaiting account assignment (contact @Neitman275 or @Huyneko)</i>",
         "order_account_copy_hint": "<i>(Tap any value above to copy)</i>",
         
         # Checkout FSM
@@ -251,22 +254,25 @@ STRINGS = {
         "delivery_title": "🎉 <b>PAYMENT CONFIRMED FOR ORDER #{order_id}!</b>\n\n",
         "delivery_plan": "🤖 <b>Service Plan:</b> <b>{item_name}</b>\n",
         "delivery_amount": "💵 <b>Amount Received:</b> <b>{total_amount:,.0f} VND</b>\n━━━━━━━━━━━━━━━━━━\n",
-        "delivery_box_title": "📦 <b>YOUR CHATGPT PLUS ACCOUNT CREDENTIALS:</b>\n\n",
+        "delivery_box_title": "📦 <b>YOUR AI ACCOUNT CREDENTIALS:</b>\n\n",
         "delivery_email": "• 📧 Email Login: <code>{email}</code>\n",
         "delivery_password": "• 🔑 Password: <code>{password}</code>\n",
         "delivery_2fa": "• 🛡️ 2FA Secret Key: <code>{two_factor}</code>\n",
-        "delivery_link": "• 🌐 Login URL: https://chatgpt.com\n\n",
+        "delivery_link": (
+            "• 🌐 Login URL: https://chatgpt.com\n"
+            "• 📁 Guide & Resources: https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
+        ),
         "delivery_warranty_full": (
             "🛡️ <b>30-DAY FULL WARRANTY POLICY:</b>\n"
             "• 1-to-1 immediate replacement guaranteed for 30 full days.\n"
-            "• 24/7 technical support via admin @AdminSupport.\n"
+            "• 24/7 technical support via admin @Neitman275 or @Huyneko.\n"
         ),
         "delivery_warranty_none": (
             "⚠️ <b>USAGE NOTICE:</b>\n"
             "• Economy plan without warranty. Please do not modify original email.\n"
             "• Dedicated account ready for immediate personal use.\n"
         ),
-        "delivery_footer": "Thank you for choosing <b>ChatGPT Plus Store</b>! Have an amazing AI experience.",
+        "delivery_footer": "Thank you for choosing <b>AI Store</b>! Have an amazing AI experience.",
         
         # Restock Notification
         "restock_broadcast_caption": (

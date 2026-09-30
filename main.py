@@ -8,7 +8,7 @@ import asyncio
 import logging
 import sys
 from aiohttp import web
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from config import TELEGRAM_TOKEN, WEBHOOK_HOST, WEBHOOK_PORT
 from database.database import Base, engine, get_db
@@ -38,10 +38,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error causing updates to fail."""
+    logger.error("Exception while handling an update: %s", context.error, exc_info=context.error)
+
+
 def init_database() -> None:
     """Initialize database tables and seed ChatGPT Plus packages if empty."""
     logger.info("Initializing database schema...")
     Base.metadata.create_all(bind=engine)
+
+    # Auto-migration for SQLite schema updates
+    try:
+        with engine.connect() as conn:
+            cursor = conn.exec_driver_sql("PRAGMA table_info(users)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "language" not in columns:
+                logger.info("Auto-migrating: adding 'language' column to users table...")
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN language VARCHAR(10)")
+                conn.commit()
+    except Exception as exc:
+        logger.warning("Database schema auto-migration check: %s", exc)
 
     try:
         with get_db() as db:
@@ -59,6 +76,9 @@ async def run_application() -> None:
     # 2. Build python-telegram-bot Application
     logger.info("Building Telegram Bot application...")
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Register error handler
+    application.add_error_handler(error_handler)
 
     # 3. Register Command and Menu Handlers
     application.add_handler(CommandHandler("start", start))

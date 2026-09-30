@@ -11,7 +11,7 @@ from typing import Optional
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import Forbidden, TelegramError
 
-from config import ADMIN_CHAT_ID, TELEGRAM_TOKEN, get_product_image
+from config import ADMIN_CHAT_ID, TELEGRAM_TOKEN, get_admin_ids, get_product_image
 from database.database import get_db
 from database.models import Product, User
 from services.account_service import AccountService
@@ -185,9 +185,9 @@ class BroadcastService:
             blocked_count,
         )
 
-        # Notify admin of broadcast result
-        target_admin = admin_chat_id or ADMIN_CHAT_ID
-        if target_admin:
+        # Notify admin(s) of broadcast result
+        target_admins = [admin_chat_id] if admin_chat_id else get_admin_ids()
+        if target_admins:
             summary_text = (
                 "📢 <b>KẾT QUẢ GỬI THÔNG BÁO HÀNG MỚI VỀ:</b>\n\n"
                 f"• Mặt hàng: <b>{product_name}</b>\n"
@@ -196,14 +196,17 @@ class BroadcastService:
                 f"• Gửi thành công: <b>{sent_count}</b>\n"
                 f"• Thất bại / Đã chặn bot: <b>{failed_count}</b>\n"
             )
-            try:
-                await bot.send_message(
-                    chat_id=target_admin,
-                    text=summary_text,
-                    parse_mode="HTML",
-                )
-            except Exception as admin_err:
-                logger.warning("Failed to send broadcast summary to admin: %s", admin_err)
+            for aid in target_admins:
+                if not aid:
+                    continue
+                try:
+                    await bot.send_message(
+                        chat_id=aid,
+                        text=summary_text,
+                        parse_mode="HTML",
+                    )
+                except Exception as admin_err:
+                    logger.warning("Failed to send broadcast summary to admin %s: %s", aid, admin_err)
 
         return {
             "total": total_users,

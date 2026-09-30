@@ -338,39 +338,52 @@ class AccountService:
         for item in order.items:
             product_id = item.product_id
             needed_qty = item.quantity
+            product = db.query(Product).filter(Product.id == product_id).first()
 
-            # Check if accounts were already reserved for this order
-            reserved_accounts = (
-                db.query(ProductAccount)
-                .filter(
-                    ProductAccount.order_id == order.id,
-                    ProductAccount.product_id == product_id,
-                    ProductAccount.status == "RESERVED",
-                )
-                .all()
+            has_managed = (
+                db.query(func.count(ProductAccount.id))
+                .filter(ProductAccount.product_id == product_id)
+                .scalar()
+                > 0
             )
 
-            accounts_to_fulfill = list(reserved_accounts)
-
-            # If not enough reserved, pull from AVAILABLE
-            if len(accounts_to_fulfill) < needed_qty:
-                extra_needed = needed_qty - len(accounts_to_fulfill)
-                extra_accounts = AccountService.get_available_accounts(
-                    db=db, product_id=product_id, limit=extra_needed
+            if has_managed:
+                # Check if accounts were already reserved for this order
+                reserved_accounts = (
+                    db.query(ProductAccount)
+                    .filter(
+                        ProductAccount.order_id == order.id,
+                        ProductAccount.product_id == product_id,
+                        ProductAccount.status == "RESERVED",
+                    )
+                    .all()
                 )
-                accounts_to_fulfill.extend(extra_accounts)
 
-            for acc in accounts_to_fulfill:
-                acc.status = "SOLD"
-                acc.order_id = order.id
-                acc.sold_at = func.now()
-                allocated.append(acc)
+                accounts_to_fulfill = list(reserved_accounts)
 
-            # Flush status updates to database before counting remaining stock
-            db.flush()
+                # If not enough reserved, pull from AVAILABLE
+                if len(accounts_to_fulfill) < needed_qty:
+                    extra_needed = needed_qty - len(accounts_to_fulfill)
+                    extra_accounts = AccountService.get_available_accounts(
+                        db=db, product_id=product_id, limit=extra_needed
+                    )
+                    accounts_to_fulfill.extend(extra_accounts)
 
-            # Sync stock quantity for this product
-            AccountService.sync_product_stock(db, product_id)
+                for acc in accounts_to_fulfill:
+                    acc.status = "SOLD"
+                    acc.order_id = order.id
+                    acc.sold_at = func.now()
+                    allocated.append(acc)
+
+                # Flush status updates to database before counting remaining stock
+                db.flush()
+
+                # Sync stock quantity for this product
+                AccountService.sync_product_stock(db, product_id)
+            else:
+                if product:
+                    product.stock_quantity = max(0, product.stock_quantity - needed_qty)
+                    db.flush()
 
         db.flush()
         return allocated
@@ -499,7 +512,7 @@ class AccountService:
                 warranty_text = (
                     "🛡️ <b>30-DAY FULL REPLACEMENT WARRANTY:</b>\n"
                     "• 1-to-1 immediate replacement guaranteed for 30 full days.\n"
-                    "• 24/7 technical support: @AdminSupport\n"
+                    "• 24/7 technical support: @Neitman275 or @Huyneko\n"
                 )
             else:
                 warranty_text = (
@@ -523,7 +536,7 @@ class AccountService:
             else:
                 credentials_text = (
                     "⚠️ <i>Your account is being prepared by our technical staff.\n"
-                    "Please send your order ID to @AdminSupport to receive your account immediately!</i>"
+                    "Please send your order ID to @Neitman275 or @Huyneko to receive your account immediately!</i>"
                 )
 
             return (
@@ -534,9 +547,10 @@ class AccountService:
                 f"📦 <b>YOUR ACCOUNT CREDENTIALS:</b>\n\n"
                 f"{credentials_text}\n\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"🌐 <b>LOGIN AT:</b> https://chatgpt.com\n\n"
+                f"🌐 <b>LOGIN AT:</b> https://chatgpt.com\n"
+                f"📁 <b>GUIDE & RESOURCES:</b> https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
                 f"{warranty_text}\n"
-                f"Thank you for choosing ChatGPT Plus Store! Enjoy your premium AI experience."
+                f"Thank you for choosing AI Store! Enjoy your premium AI experience."
             )
 
         # Vietnamese (Default)
@@ -544,7 +558,7 @@ class AccountService:
             warranty_text = (
                 "🛡️ <b>CHÍNH SÁCH BẢO HÀNH FULL 30 NGÀY:</b>\n"
                 "• Bảo hành 1 đổi 1 trong 30 ngày nếu xảy ra sự cố từ hệ thống OpenAI.\n"
-                "• Kênh hỗ trợ kỹ thuật: @AdminSupport\n"
+                "• Kênh hỗ trợ kỹ thuật: @Neitman275 hoặc @Huyneko\n"
             )
         else:
             warranty_text = (
@@ -568,7 +582,7 @@ class AccountService:
         else:
             credentials_text = (
                 "⚠️ <i>Tài khoản của bạn đang được kỹ thuật viên chuẩn bị kích hoạt thủ công.\n"
-                "Vui lòng gửi mã đơn hàng cho @AdminSupport để nhận tài khoản ngay lập tức!</i>"
+                "Vui lòng gửi mã đơn hàng cho @Neitman275 hoặc @Huyneko để nhận tài khoản ngay lập tức!</i>"
             )
 
         return (
@@ -579,7 +593,8 @@ class AccountService:
             f"📦 <b>THÔNG TIN TÀI KHOẢN CỦA BẠN:</b>\n\n"
             f"{credentials_text}\n\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🌐 <b>ĐĂNG NHẬP TẠI:</b> https://chatgpt.com\n\n"
+            f"🌐 <b>ĐĂNG NHẬP TẠI:</b> https://chatgpt.com\n"
+            f"📁 <b>TÀI LIỆU & HƯỚNG DẪN:</b> https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
             f"{warranty_text}\n"
-            f"Cảm ơn bạn đã tin tưởng ủng hộ shop! Chúc bạn có trải nghiệm tuyệt vời cùng ChatGPT Plus."
+            f"Cảm ơn bạn đã tin tưởng ủng hộ shop! Chúc bạn có trải nghiệm tuyệt vời cùng AI."
         )

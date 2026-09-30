@@ -138,12 +138,8 @@ class OrderService:
         db.add(order_item)
         db.flush()
 
-        # Reserve accounts or deduct inventory
-        if has_managed_accounts:
-            AccountService.reserve_accounts_for_order(db, order)
-        else:
-            product.stock_quantity -= quantity
-            db.flush()
+        # NOTE: Do NOT deduct inventory or reserve accounts here.
+        # Stock deduction and account allocation happen strictly upon payment confirmation (PAID).
 
         return order
 
@@ -224,7 +220,7 @@ class OrderService:
                 ),
                 Product(
                     name="ChatGPT Plus 1 Tháng (Không bảo hành)",
-                    price=145000,
+                    price=150000,
                     stock_quantity=999,
                     is_active=True,
                 ),

@@ -11,7 +11,7 @@ import logging
 from aiohttp import web
 from telegram import Bot
 
-from config import ADMIN_CHAT_ID, SEPAY_API_KEY
+from config import ADMIN_CHAT_ID, SEPAY_API_KEY, get_admin_ids
 from database.database import get_db
 from services.payment_service import PaymentService
 
@@ -128,8 +128,9 @@ class WebhookServer:
                 except Exception as send_err:
                     logger.error("Failed to send Telegram delivery message to %s: %s", customer_telegram_id, send_err)
 
-                # Send alert to Admin if configured
-                if ADMIN_CHAT_ID:
+                # Send alert to all configured Admins
+                admin_ids = get_admin_ids()
+                if admin_ids:
                     admin_alert = (
                         f"🔔 <b>THÔNG BÁO TIỀN VỀ THÀNH CÔNG!</b>\n\n"
                         f"• Đơn hàng: <b>#{order_id}</b>\n"
@@ -138,14 +139,15 @@ class WebhookServer:
                         f"• Cổng: <b>{gateway}</b> | Mã GD: <code>{ref_code}</code>\n"
                         f"• Trạng thái: <i>Hệ thống đã tự động gửi tài khoản cho khách.</i>"
                     )
-                    try:
-                        await self.bot.send_message(
-                            chat_id=ADMIN_CHAT_ID,
-                            text=admin_alert,
-                            parse_mode="HTML",
-                        )
-                    except Exception as admin_err:
-                        logger.warning("Failed to notify admin: %s", admin_err)
+                    for aid in admin_ids:
+                        try:
+                            await self.bot.send_message(
+                                chat_id=aid,
+                                text=admin_alert,
+                                parse_mode="HTML",
+                            )
+                        except Exception as admin_err:
+                            logger.warning("Failed to notify admin %s: %s", aid, admin_err)
 
         return web.json_response({
             "success": success,
