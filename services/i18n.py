@@ -108,7 +108,7 @@ STRINGS = {
             "📲 <b>HƯỚNG DẪN THANH TOÁN QUA VIETQR:</b>\n"
             "1. Mở ứng dụng ngân hàng hoặc ví điện tử bất kỳ.\n"
             "2. Quét mã QR trên để tự động điền STK, số tiền và nội dung chuyển khoản.\n"
-            "3. Sau khi chuyển tiền, hệ thống sẽ tự động giao tài khoản sau 1-3 giây!"
+            "3. Sau khi chuyển tiền, hệ thống sẽ tự động giao tài khoản sau 1-3 phút!"
         ),
         "btn_paid_confirm": "✅ Tôi đã chuyển khoản xong",
         "paid_notification_received": "⏳ Đã ghi nhận thông báo chuyển khoản của bạn cho đơn #{order_id}.\nBộ phận đối soát sẽ duyệt ngay khi tiền nổi vào tài khoản!",
@@ -245,7 +245,7 @@ STRINGS = {
             "📲 <b>PAYMENT INSTRUCTIONS VIA VIETQR:</b>\n"
             "1. Open any Vietnamese banking app or MoMo.\n"
             "2. Scan the VietQR code above (account number, exact amount & memo are pre-filled).\n"
-            "3. Once transferred, your account credentials will be automatically delivered in 1-3 seconds!"
+            "3. Once transferred, your account credentials will be automatically delivered in 1-3 minutes!"
         ),
         "btn_paid_confirm": "✅ I Have Paid",
         "paid_notification_received": "⏳ Payment notification received for order #{order_id}.\nOur system will confirm your order as soon as the bank transfer is detected!",
