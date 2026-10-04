@@ -9,7 +9,7 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from config import BANK_ACCOUNT, BANK_ACCOUNT_NAME, BANK_ID
+from config import BANK_ACCOUNT, BANK_ACCOUNT_NAME, BANK_ID, PATO_NETFLIX_PRODUCT_ID
 from database.models import Order, OrderItem, Product, ProductAccount, User
 from services.account_service import AccountService
 
@@ -60,16 +60,14 @@ class OrderService:
         return user
 
     @staticmethod
-    def get_active_products(db: Session) -> list[Product]:
-        """Retrieve all currently active products available in stock."""
+    def get_active_products(db: Session, in_stock_only: bool = False) -> list[Product]:
+        """Retrieve all currently active products (optionally filtered by available stock)."""
         # Sync stock for products managed via ProductAccount first
         AccountService.sync_product_stock(db)
-        return (
-            db.query(Product)
-            .filter(Product.is_active == True, Product.stock_quantity > 0)  # noqa: E712
-            .order_by(Product.id.asc())
-            .all()
-        )
+        query = db.query(Product).filter(Product.is_active == True)  # noqa: E712
+        if in_stock_only:
+            query = query.filter(Product.stock_quantity > 0)
+        return query.order_by(Product.id.asc()).all()
 
     @staticmethod
     def get_product_by_id(db: Session, product_id: int) -> Optional[Product]:
@@ -93,25 +91,34 @@ class OrderService:
         if not product or not product.is_active:
             raise ValueError("Sản phẩm không tồn tại hoặc đã ngừng kinh doanh.")
 
-        # Check if product inventory is managed via ProductAccount table
-        has_managed_accounts = (
-            db.query(func.count(ProductAccount.id))
-            .filter(ProductAccount.product_id == product_id)
-            .scalar()
-            > 0
-        )
-
-        if has_managed_accounts:
-            avail_accounts = AccountService.count_available_accounts(db, product_id)
-            if avail_accounts < quantity:
-                raise ValueError(
-                    f"Sản phẩm '{product.name}' chỉ còn {avail_accounts} tài khoản trong kho."
-                )
-        else:
+        # Check if product is Pato Netflix (managed manually as integer) or managed via ProductAccount table
+        if product_id == PATO_NETFLIX_PRODUCT_ID:
             if product.stock_quantity < quantity:
                 raise ValueError(
-                    f"Sản phẩm '{product.name}' chỉ còn {product.stock_quantity} gói trong kho."
+                    f"Sản phẩm '{product.name}' chỉ còn {product.stock_quantity} trong kho."
                 )
+        else:
+            has_managed_accounts = (
+                db.query(func.count(ProductAccount.id))
+                .filter(
+                    ProductAccount.product_id == product_id,
+                    ProductAccount.status.in_(["AVAILABLE", "RESERVED"]),
+                )
+                .scalar()
+                > 0
+            )
+
+            if has_managed_accounts:
+                avail_accounts = AccountService.count_available_accounts(db, product_id)
+                if avail_accounts < quantity:
+                    raise ValueError(
+                        f"Sản phẩm '{product.name}' chỉ còn {avail_accounts} tài khoản trong kho."
+                    )
+            else:
+                if product.stock_quantity < quantity:
+                    raise ValueError(
+                        f"Sản phẩm '{product.name}' chỉ còn {product.stock_quantity} trong kho."
+                    )
 
         # Ensure user exists
         user = OrderService.get_or_create_user(db=db, telegram_id=telegram_id, full_name=full_name)
@@ -210,27 +217,69 @@ class OrderService:
             db.flush()
             existing_products = []
 
-        if len(existing_products) == 0:
-            chatgpt_plans = [
-                Product(
-                    name="ChatGPT Plus 1 Tháng (Bảo hành full)",
-                    price=275000,
-                    stock_quantity=999,
-                    is_active=True,
-                ),
-                Product(
-                    name="ChatGPT Plus 1 Tháng (Không bảo hành)",
-                    price=150000,
-                    stock_quantity=999,
-                    is_active=True,
-                ),
-            ]
-            db.add_all(chatgpt_plans)
-            db.flush()
-        else:
-            # Deactivate any test products so they are no longer displayed in shop
-            db.query(Product).filter(
-                (Product.name.like("%Test%")) | (Product.price == 2000)
-            ).update({"is_active": False}, synchronize_session=False)
-            db.flush()
+        default_plans = [
+            {
+                "name": "ChatGPT Plus 1 Tháng (Bảo hành full)",
+                "price": 270000,
+                "is_active": False,
+            },
+            {
+                "name": "ChatGPT Plus 1 Tháng (Không bảo hành)",
+                "price": 150000,
+                "is_active": False,
+            },
+            {
+                "name": "Tài khoản ChatGPT có offer trial Plus free 1 tháng",
+                "price": 30000,
+                "is_active": True,
+            },
+            {
+                "name": "Gmail Đa Quốc Gia (Add thẻ + ví, Live 15p - 48h)",
+                "price": 5000,
+                "is_active": True,
+            },
+            {
+                "name": "Link Netflix (Đăng nhập 1 Click - HSD 30 Ngày)",
+                "price": 4000,
+                "is_active": True,
+            },
+        ]
+
+        existing_map = {p.name.lower(): p for p in existing_products}
+        for plan in default_plans:
+            plan_name = plan["name"]
+            plan_price = plan["price"]
+            target_active = plan.get("is_active", True)
+            matched_prod = existing_map.get(plan_name.lower())
+
+            if not matched_prod:
+                for exist_p in existing_products:
+                    p_lower = exist_p.name.lower()
+                    if ("offer" in plan_name.lower() and "offer" in p_lower) or \
+                       ("bảo hành full" in plan_name.lower() and "bảo hành full" in p_lower) or \
+                       ("không bảo hành" in plan_name.lower() and "không bảo hành" in p_lower) or \
+                       ("gmail" in plan_name.lower() and "gmail" in p_lower) or \
+                       ("netflix" in plan_name.lower() and "netflix" in p_lower):
+                        matched_prod = exist_p
+                        break
+
+            if matched_prod:
+                if matched_prod.price != plan_price:
+                    matched_prod.price = plan_price
+                if matched_prod.is_active != target_active:
+                    matched_prod.is_active = target_active
+            else:
+                new_prod = Product(
+                    name=plan_name,
+                    price=plan_price,
+                    stock_quantity=0,
+                    is_active=target_active,
+                )
+                db.add(new_prod)
+
+        # Deactivate any test products so they are no longer displayed in shop
+        db.query(Product).filter(
+            (Product.name.like("%Test%")) | (Product.price == 2000)
+        ).update({"is_active": False}, synchronize_session=False)
+        db.flush()
 

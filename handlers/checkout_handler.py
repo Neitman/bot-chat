@@ -238,6 +238,14 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     text = update.message.text.strip()
 
+    # If customer pressed a bottom menu button, exit checkout and route to menu
+    if text.startswith(("🤖", "🛒", "📞", "🌐", "🆔", "📊", "➕")):
+        context.user_data.pop("checkout", None)
+        from handlers.start_handler import reply_keyboard_text_handler
+
+        await reply_keyboard_text_handler(update, context)
+        return ConversationHandler.END
+
     lang = checkout_data.get("lang", "vi")
 
     # Validate integer quantity

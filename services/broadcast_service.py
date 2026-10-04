@@ -89,11 +89,13 @@ class BroadcastService:
             user_lang = user_info["language"] if user_info["language"] in ("vi", "en") else "vi"
 
             # Localize warranty policy badge
-            warranty_badge = (
-                t("warranty_full_badge", user_lang)
-                if "bảo hành full" in product_name.lower() or "full" in product_name.lower()
-                else t("warranty_none_badge", user_lang)
-            )
+            p_lower = product_name.lower()
+            if "bảo hành full" in p_lower or "full" in p_lower:
+                warranty_badge = t("warranty_full_badge", user_lang)
+            elif "offer" in p_lower or "trial" in p_lower:
+                warranty_badge = t("warranty_offer_badge", user_lang)
+            else:
+                warranty_badge = t("warranty_none_badge", user_lang)
 
             # Localize caption & buy button
             caption = t(

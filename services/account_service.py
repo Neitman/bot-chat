@@ -14,6 +14,7 @@ from typing import Optional, Tuple
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from config import PATO_NETFLIX_PRODUCT_ID
 from database.models import Order, OrderItem, Product, ProductAccount
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,16 @@ class AccountService:
         if not raw or raw.startswith(("#", "//")):
             return None
 
+        # Check if line is a direct URL (e.g. Netflix login token link)
+        if raw.startswith(("http://", "https://")):
+            return {
+                "raw_data": raw,
+                "account": raw,
+                "password": "",
+                "two_factor": "",
+                "note": "Link URL",
+            }
+
         delimiter = "|" if "|" in raw else (":" if ":" in raw else None)
 
         if delimiter:
@@ -101,6 +112,12 @@ class AccountService:
         acc = parsed.get("account", "").strip()
         pwd = parsed.get("password", "").strip()
         two_fa = parsed.get("two_factor", "").strip()
+
+        # URL items (e.g. Netflix login token links)
+        if acc.startswith(("http://", "https://")):
+            if len(acc) < 10:
+                return False, "Đường link URL không hợp lệ (quá ngắn)."
+            return True, "Hợp lệ"
 
         # Account / Email check
         if not acc or len(acc) < 3:
@@ -340,9 +357,19 @@ class AccountService:
             needed_qty = item.quantity
             product = db.query(Product).filter(Product.id == product_id).first()
 
+            # For Pato Netflix: stock is managed manually as integer, deduct directly on purchase
+            if product_id == PATO_NETFLIX_PRODUCT_ID:
+                if product:
+                    product.stock_quantity = max(0, product.stock_quantity - needed_qty)
+                    db.flush()
+                continue
+
             has_managed = (
                 db.query(func.count(ProductAccount.id))
-                .filter(ProductAccount.product_id == product_id)
+                .filter(
+                    ProductAccount.product_id == product_id,
+                    ProductAccount.status.in_(["AVAILABLE", "RESERVED"]),
+                )
                 .scalar()
                 > 0
             )
@@ -400,10 +427,17 @@ class AccountService:
 
         products = query.all()
         for p in products:
+            # Exempt PATO_NETFLIX_PRODUCT_ID from auto-syncing with ProductAccount
+            if p.id == PATO_NETFLIX_PRODUCT_ID:
+                continue
+
             # Check if this product has accounts managed in product_accounts
             has_managed_accounts = (
                 db.query(func.count(ProductAccount.id))
-                .filter(ProductAccount.product_id == p.id)
+                .filter(
+                    ProductAccount.product_id == p.id,
+                    ProductAccount.status.in_(["AVAILABLE", "RESERVED"]),
+                )
                 .scalar()
                 > 0
             )
@@ -442,21 +476,27 @@ class AccountService:
             }
 
         # 1. Available Stock
-        has_managed = (
-            db.query(func.count(ProductAccount.id))
-            .filter(ProductAccount.product_id == product_id)
-            .scalar()
-            or 0
-        )
-        if has_managed > 0:
-            avail = (
+        if product_id == PATO_NETFLIX_PRODUCT_ID:
+            avail = product.stock_quantity
+        else:
+            has_managed = (
                 db.query(func.count(ProductAccount.id))
-                .filter(ProductAccount.product_id == product_id, ProductAccount.status == "AVAILABLE")
+                .filter(
+                    ProductAccount.product_id == product_id,
+                    ProductAccount.status.in_(["AVAILABLE", "RESERVED"]),
+                )
                 .scalar()
                 or 0
             )
-        else:
-            avail = product.stock_quantity
+            if has_managed > 0:
+                avail = (
+                    db.query(func.count(ProductAccount.id))
+                    .filter(ProductAccount.product_id == product_id, ProductAccount.status == "AVAILABLE")
+                    .scalar()
+                    or 0
+                )
+            else:
+                avail = product.stock_quantity
 
         # 2. Sold Count (accurate count from actual PAID orders and SOLD accounts)
         sold_orders = (
@@ -506,15 +546,111 @@ class AccountService:
         lang = getattr(order.user, "language", "vi") or "vi"
         is_en = lang == "en"
 
-        is_warranty_full = "Bảo hành full" in item_name or "full" in item_name.lower()
+        p_name_lower = item_name.lower()
+        is_netflix = "netflix" in p_name_lower
+        if is_netflix:
+            from datetime import datetime, timedelta
+            order_date = getattr(order, "created_at", None) or datetime.now()
+            expiry_date = order_date + timedelta(days=30)
+            expiry_str = expiry_date.strftime("%d/%m/%Y")
+
+            if is_en:
+                if accounts:
+                    link_blocks = []
+                    for i, acc in enumerate(accounts, start=1):
+                        url = acc.account or acc.raw_data
+                        prefix = f"🔹 <b>LINK #{i}:</b>\n" if len(accounts) > 1 else ""
+                        link_blocks.append(
+                            f"{prefix}"
+                            f"• 🔗 <b>New Login Link:</b> <a href=\"{url}\">{url}</a>\n"
+                            f"• 📋 <b>Quick copy link:</b>\n<code>{url}</code>"
+                        )
+                    links_text = "\n\n".join(link_blocks)
+                else:
+                    links_text = "⚠️ <i>Your Netflix link is being generated by support. Please send your order ID to @Neitman275 or @Huyneko!</i>"
+
+                return (
+                    f"🍿 <b>ADMIN HAS ISSUED NEW NETFLIX LINK!</b>\n\n"
+                    f"• 📋 <b>Order:</b> <b>#{order_id}</b>\n"
+                    f"• 💵 <b>Amount Received:</b> <b>{total_amount:,.0f} VND</b>\n\n"
+                    f"{links_text}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"⚠️ <b>Please access the link within 15 minutes of receipt.</b>\n"
+                    f"⏳ <b>Remaining validity:</b> 30 days\n"
+                    f"📅 <b>Expires on:</b> <b>{expiry_str}</b>\n"
+                    f"ℹ️ <i>Validity is calculated from initial purchase date, not Next Billing Date.</i>\n\n"
+                    f"Thank you for choosing our store! Enjoy your movies."
+                )
+
+            # Vietnamese (Default)
+            if accounts:
+                link_blocks = []
+                for i, acc in enumerate(accounts, start=1):
+                    url = acc.account or acc.raw_data
+                    prefix = f"🔹 <b>LINK #{i}:</b>\n" if len(accounts) > 1 else ""
+                    link_blocks.append(
+                        f"{prefix}"
+                        f"• 🔗 <b>Link đăng nhập mới:</b> <a href=\"{url}\">{url}</a>\n"
+                        f"• 📋 <b>Sao chép link:</b>\n<code>{url}</code>"
+                    )
+                links_text = "\n\n".join(link_blocks)
+            else:
+                links_text = "⚠️ <i>Link Netflix đang được kỹ thuật viên tạo mới. Vui lòng gửi mã đơn #{order_id} cho @Neitman275 hoặc @Huyneko!</i>"
+
+            return (
+                f"🍿 <b>ADMIN ĐÃ CẤP LINK NETFLIX MỚI</b>\n\n"
+                f"• 📋 <b>Đơn:</b> <b>#{order_id}</b>\n"
+                f"• 💵 <b>Số tiền đã nhận:</b> <b>{total_amount:,.0f} VND</b>\n\n"
+                f"{links_text}\n\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"⚠️ <b>Vui lòng truy cập link trong vòng 15 phút sau khi nhận.</b>\n"
+                f"⏳ <b>HSD còn lại:</b> 30 ngày\n"
+                f"📅 <b>Hết hạn:</b> <b>{expiry_str}</b>\n"
+                f"ℹ️ <i>HSD được tính từ ngày mua ban đầu, không theo Next Billing Date.</i>\n\n"
+                f"Cảm ơn bạn đã tin tưởng ủng hộ shop! Chúc bạn xem phim vui vẻ."
+            )
+
+        is_gmail = "gmail" in p_name_lower
+        is_warranty_full = "bảo hành full" in p_name_lower or "full" in p_name_lower
+        is_offer_trial = "offer" in p_name_lower or "trial" in p_name_lower
         if is_en:
-            if is_warranty_full:
+            if is_gmail:
+                login_block = "🌐 <b>LOGIN AT:</b> https://accounts.google.com\n\n"
+                warranty_text = (
+                    "⚠️ <b>IMPORTANT GMAIL USAGE NOTICE:</b>\n"
+                    "• Multi-country, add card + wallet (verified).\n"
+                    "• Live 15m - 48h from initial login.\n"
+                    "• Buy 1 account to test before buying bulk quantities.\n"
+                    "• <b>ONLY PURCHASE IF YOU KNOW HOW TO USE x10!</b>\n"
+                    "• Format: <code>account | password</code> (no 2FA).\n"
+                    "• 24/7 technical support: @Neitman275 or @Huyneko\n"
+                )
+            elif is_warranty_full:
+                login_block = (
+                    "🌐 <b>LOGIN AT:</b> https://chatgpt.com\n"
+                    "📁 <b>GUIDE & RESOURCES:</b> https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
+                )
                 warranty_text = (
                     "🛡️ <b>30-DAY FULL REPLACEMENT WARRANTY:</b>\n"
                     "• 1-to-1 immediate replacement guaranteed for 30 full days.\n"
                     "• 24/7 technical support: @Neitman275 or @Huyneko\n"
                 )
+            elif is_offer_trial:
+                login_block = (
+                    "🌐 <b>LOGIN AT:</b> https://chatgpt.com\n"
+                    "📁 <b>GUIDE & RESOURCES:</b> https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
+                )
+                warranty_text = (
+                    "🎁 <b>OFFER TRIAL PLUS ACTIVATION GUIDE:</b>\n"
+                    "• Account has a pre-qualified 1-month free trial offer for ChatGPT Plus.\n"
+                    "• Log in to https://chatgpt.com and click the upgrade/trial banner to claim your free month.\n"
+                    "• 24/7 technical support: @Neitman275 or @Huyneko\n"
+                )
             else:
+                login_block = (
+                    "🌐 <b>LOGIN AT:</b> https://chatgpt.com\n"
+                    "📁 <b>GUIDE & RESOURCES:</b> https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
+                )
                 warranty_text = (
                     "⚠️ <b>USAGE NOTICE:</b>\n"
                     "• Dedicated private account. Please do not modify the original email.\n"
@@ -531,6 +667,16 @@ class AccountService:
                         acc_lines.append(f"• 🔑 <b>Password:</b> <code>{acc.password}</code>")
                     if acc.two_factor:
                         acc_lines.append(f"• 🔐 <b>2FA Secret Key:</b> <code>{acc.two_factor}</code>")
+
+                    # Dòng copy nhanh định dạng: tài khoản | mật khẩu | 2FA
+                    copy_parts = [acc.account or ""]
+                    if acc.password:
+                        copy_parts.append(acc.password)
+                    if acc.two_factor:
+                        copy_parts.append(acc.two_factor)
+                    copy_string = " | ".join(copy_parts)
+                    acc_lines.append(f"• 📋 <b>Quick copy:</b> <code>{copy_string}</code>")
+
                     account_blocks.append("\n".join(acc_lines))
                 credentials_text = "\n\n".join(account_blocks)
             else:
@@ -541,26 +687,55 @@ class AccountService:
 
             return (
                 f"🎉 <b>PAYMENT CONFIRMED FOR ORDER #{order_id}!</b>\n\n"
-                f"🤖 <b>Plan:</b> <b>{item_name}</b>\n"
+                f"📦 <b>Product:</b> <b>{item_name}</b>\n"
                 f"💵 <b>Amount Received:</b> <b>{total_amount:,.0f} VND</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📦 <b>YOUR ACCOUNT CREDENTIALS:</b>\n\n"
                 f"{credentials_text}\n\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"🌐 <b>LOGIN AT:</b> https://chatgpt.com\n"
-                f"📁 <b>GUIDE & RESOURCES:</b> https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
+                f"{login_block}"
                 f"{warranty_text}\n"
-                f"Thank you for choosing AI Store! Enjoy your premium AI experience."
+                f"Thank you for choosing our store! Enjoy your premium experience."
             )
 
         # Vietnamese (Default)
-        if is_warranty_full:
+        if is_gmail:
+            login_block = "🌐 <b>ĐĂNG NHẬP TẠI:</b> https://accounts.google.com\n\n"
+            warranty_text = (
+                "⚠️ <b>LƯU Ý QUAN TRỌNG VỀ SẢN PHẨM GMAIL:</b>\n"
+                "• Đa quốc gia, add thẻ + ví (có ver).\n"
+                "• Live 15p - 48h tính từ lúc login.\n"
+                "• Mua 1 tài khoản để test trước khi mua số lượng lớn (SLL).\n"
+                "• <b>BIẾT DÙNG HẴNG MUA x10!</b>\n"
+                "• Định dạng: <code>tài khoản | mật khẩu</code> (không có 2FA).\n"
+                "• Kênh hỗ trợ kỹ thuật: @Neitman275 hoặc @Huyneko\n"
+            )
+        elif is_warranty_full:
+            login_block = (
+                "🌐 <b>ĐĂNG NHẬP TẠI:</b> https://chatgpt.com\n"
+                "📁 <b>TÀI LIỆU & HƯỚNG DẪN:</b> https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
+            )
             warranty_text = (
                 "🛡️ <b>CHÍNH SÁCH BẢO HÀNH FULL 30 NGÀY:</b>\n"
                 "• Bảo hành 1 đổi 1 trong 30 ngày nếu xảy ra sự cố từ hệ thống OpenAI.\n"
                 "• Kênh hỗ trợ kỹ thuật: @Neitman275 hoặc @Huyneko\n"
             )
+        elif is_offer_trial:
+            login_block = (
+                "🌐 <b>ĐĂNG NHẬP TẠI:</b> https://chatgpt.com\n"
+                "📁 <b>TÀI LIỆU & HƯỚNG DẪN:</b> https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
+            )
+            warranty_text = (
+                "🎁 <b>HƯỚNG DẪN KÍCH HOẠT TRIAL PLUS:</b>\n"
+                "• Tài khoản có sẵn lời mời dùng thử (Offer) gói ChatGPT Plus miễn phí 1 tháng.\n"
+                "• Đăng nhập tại https://chatgpt.com để xác nhận ưu đãi dùng thử.\n"
+                "• Kênh hỗ trợ kỹ thuật: @Neitman275 hoặc @Huyneko\n"
+            )
         else:
+            login_block = (
+                "🌐 <b>ĐĂNG NHẬP TẠI:</b> https://chatgpt.com\n"
+                "📁 <b>TÀI LIỆU & HƯỚNG DẪN:</b> https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
+            )
             warranty_text = (
                 "⚠️ <b>LƯU Ý SỬ DỤNG:</b>\n"
                 "• Tài khoản kích hoạt sử dụng riêng biệt, vui lòng không đổi email gốc.\n"
@@ -577,6 +752,16 @@ class AccountService:
                     acc_lines.append(f"• 🔑 <b>Mật khẩu:</b> <code>{acc.password}</code>")
                 if acc.two_factor:
                     acc_lines.append(f"• 🔐 <b>Mã 2FA Secret:</b> <code>{acc.two_factor}</code>")
+
+                # Dòng copy nhanh định dạng: tài khoản | mật khẩu | 2FA
+                copy_parts = [acc.account or ""]
+                if acc.password:
+                    copy_parts.append(acc.password)
+                if acc.two_factor:
+                    copy_parts.append(acc.two_factor)
+                copy_string = " | ".join(copy_parts)
+                acc_lines.append(f"• 📋 <b>Sao chép nhanh:</b> <code>{copy_string}</code>")
+
                 account_blocks.append("\n".join(acc_lines))
             credentials_text = "\n\n".join(account_blocks)
         else:
@@ -587,14 +772,13 @@ class AccountService:
 
         return (
             f"🎉 <b>THANH TOÁN THÀNH CÔNG ĐƠN HÀNG #{order_id}!</b>\n\n"
-            f"🤖 <b>Gói dịch vụ:</b> <b>{item_name}</b>\n"
+            f"📦 <b>Sản phẩm:</b> <b>{item_name}</b>\n"
             f"💵 <b>Số tiền đã nhận:</b> <b>{total_amount:,.0f} VND</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"📦 <b>THÔNG TIN TÀI KHOẢN CỦA BẠN:</b>\n\n"
             f"{credentials_text}\n\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🌐 <b>ĐĂNG NHẬP TẠI:</b> https://chatgpt.com\n"
-            f"📁 <b>TÀI LIỆU & HƯỚNG DẪN:</b> https://drive.google.com/file/d/1DLAi2HqQCXiuDaHXC6lmafeHMdbCPiVx/view?pli=1\n\n"
+            f"{login_block}"
             f"{warranty_text}\n"
-            f"Cảm ơn bạn đã tin tưởng ủng hộ shop! Chúc bạn có trải nghiệm tuyệt vời cùng AI."
+            f"Cảm ơn bạn đã tin tưởng ủng hộ shop! Chúc bạn có trải nghiệm tuyệt vời cùng dịch vụ."
         )

@@ -30,12 +30,16 @@ bot-chat/
 
 ---
 
-## 🤖 Bảng giá dịch vụ ChatGPT Plus
+## 🛍️ Bảng giá sản phẩm & dịch vụ
 
-| ID | Gói dịch vụ | Giá (VND) | Tồn kho | Mô tả & Bảo hành |
+| ID | Gói dịch vụ | Giá (VND) | Trạng thái | Mô tả & Bảo hành |
 | :---: | :--- | :---: | :---: | :--- |
-| **1** | **ChatGPT Plus 1 Tháng (Bảo hành full)** | **275.000đ** | 999 | Bảo hành 1 đổi 1 trọn vẹn 30 ngày |
-| **2** | **ChatGPT Plus 1 Tháng (Không bảo hành)** | **150.000đ** | 999 | Giá tiết kiệm, tài khoản dùng riêng |
+| **1** | **ChatGPT Plus 1 Tháng (Bảo hành full)** | **270.000đ** | 🔴 Tạm ẩn | Bảo hành 1 đổi 1 trọn vẹn 30 ngày |
+| **2** | **ChatGPT Plus 1 Tháng (Không bảo hành)** | **150.000đ** | 🔴 Tạm ẩn | Giá tiết kiệm, tài khoản dùng riêng |
+| **3** | **Tài khoản ChatGPT có offer trial Plus free 1 tháng** | **30.000đ** | 🟢 Đang bán | Sẵn ưu đãi dùng thử Plus free 1 tháng |
+| **4** | **Gmail Đa Quốc Gia (Add thẻ + ví, Live 15p - 48h)** | **5.000đ** | 🟢 Đang bán | Đa quốc gia, add thẻ/ví có ver, live 15p-48h, mua 1 test trước khi SLL |
+| **5** | **Link Netflix (Đăng nhập 1 Click - HSD 30 Ngày)** | **4.000đ** | 🟢 Đang bán | Đăng nhập 1 click qua URL token, HSD 30 ngày, truy cập trong 15p |
+
 
 ---
 
@@ -136,6 +140,7 @@ Hình ảnh minh họa sản phẩm được tự động liên kết vào kịc
 * **Ảnh chi tiết mặt hàng:**
   * Gói Bảo hành full: `chatgpt_plus_warranty.png` (hoặc `1.png` / `1.jpg`)
   * Gói Không bảo hành: `chatgpt_plus_no_warranty.png` (hoặc `2.png` / `2.jpg`)
+  * Gói Offer Trial Plus: `chatgpt_plus_trial.png` (hoặc `3.png` / `3.jpg`)
 * **Ảnh bìa chung:**
   * Đặt tên `banner.png` (hoặc `banner.jpg`): Hiển thị làm banner khi khách xem danh mục bảng giá.
 

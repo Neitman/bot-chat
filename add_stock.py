@@ -10,6 +10,8 @@ from pathlib import Path
 
 # Ensure project root is in sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from database.database import get_db
 from database.models import Product
@@ -28,9 +30,11 @@ def show_stock() -> None:
         print("-" * 65)
         for item in summary:
             price_str = f"{item['price']:,}đ"
+            status_tag = "" if item.get("is_active", True) else " [TẠM ẨN]"
+            display_name = f"{item['product_name'][:32]}{status_tag}"
             print(
                 f"{item['product_id']:<4} | "
-                f"{item['product_name'][:35]:<35} | "
+                f"{display_name:<35} | "
                 f"{price_str:<10} | "
                 f"{item['available_stock']:<8} | "
                 f"{item['sold_count']:<6}"
@@ -76,7 +80,7 @@ def import_accounts(product_id: int, content: str, note: str = "") -> None:
 def interactive_mode() -> None:
     """Run interactive CLI wizard."""
     print("\n" + "╔" + "═" * 58 + "╗")
-    print("║     QUẢN LÝ KHO HÀNG TÀI KHOẢN CHATGPT PLUS             ║")
+    print("║     QUẢN LÝ KHO HÀNG TÀI KHOẢN SỐ (DIGITAL GOODS)        ║")
     print("╚" + "═" * 58 + "╝")
 
     show_stock()
@@ -102,9 +106,14 @@ def interactive_mode() -> None:
 
             print(f"\nĐang chọn: [{product.id}] {product.name}")
             print("Định dạng hỗ trợ:")
-            print("  email | pass | 2fa_secret (hoặc email|pass)")
-            print("Ví dụ: biradarguru37@googlemail.com | CHATLGBT9999 | E6M7ATQ7QHEALOH7BU2RN6YZRQNBMBE6")
-            print("\n👉 Hãy DÁN danh sách tài khoản vào bên dưới (Nhấn Enter 2 lần hoặc gõ 'END' để kết thúc):")
+            print("  • Có 2FA:         email | pass | 2fa_secret")
+            print("  • Không 2FA:      email | pass")
+            print("  • Link URL:       https://... (Ví dụ link token Netflix)")
+            print("Ví dụ:")
+            print("  - ChatGPT: user1@gmail.com | Pass123 | E6M7ATQ7QHEALOH7BU2RN6YZRQNBMBE6")
+            print("  - Gmail:   customer99@gmail.com | StrongPassword#2026")
+            print("  - Netflix: https://netflix.com/?nftoken=Bgiqv%2BvcAxLC...")
+            print("\n👉 Hãy DÁN danh sách tài khoản / link vào bên dưới (Nhấn Enter 2 lần hoặc gõ 'END' để kết thúc):")
 
             lines = []
             while True:

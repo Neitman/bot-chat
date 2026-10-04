@@ -11,6 +11,16 @@ techpro.dev99@gmail.com | AlphaBeta!789 | E6M7ATQ7QHEALOH7BU2RN6YZRQNBMBE6
 david.beckham@gmail.com:PassWord@123:HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ
 sarah.connor@yahoo.com:Terminator!2026:NVKG643VOFPWC5C2
 
-# === Định dạng 3 (Không có 2FA, chỉ có Email và Password): ===
-budget_user1@gmail.com | MatKhauDonGian123
-budget_user2@gmail.com | MatKhauDonGian456
+# === Định dạng 3 (Không có 2FA, ví dụ tài khoản Gmail: email | password): ===
+# Định dạng: tài khoản | mật khẩu (hoặc email:matkhau)
+# Sản phẩm: Gmail Đa Quốc Gia (Add thẻ + ví, Live 15p - 48h)
+gmail_user1@gmail.com | MatKhauManh#2026
+gmail_user2@gmail.com | PasswordGlobal999
+john.smith99@gmail.com:SecretPass@2026
+
+# === Định dạng 4 (Đường link URL trực tiếp, ví dụ Link Netflix): ===
+# Định dạng: Mỗi dòng là 1 đường link URL (hệ thống tự động phát hiện)
+# Sản phẩm: Link Netflix (Đăng nhập 1 Click - HSD 30 Ngày)
+https://netflix.com/?nftoken=Bgiqv%2BvcAxLCAdjG8hiGYquWHbfXSQLhWl4o4J%2BGN4QZXf3cImMwMeU7H6QnIyuKGwoWj1su9rDbepJ%2BhXrDloGk44urvslEiwJWseeDKtPj4HV56HCY9WHcnrdFVJ%2B4qPdZkQC7EYYvnEZ%2B39%2Bt%2BWg%2F1WIodaY9bO6YxRjAB6TMxA6NMEK88v3QnnXEAb9Y8KOSdsno6gENPxSD5CBZCPUpbmiCjSWOO7zlx3X%2FB%2Bc1lRUQ7pLophpr4tksEBogmzf7j0xUyDD2Sd72GAYiDgoM60tEZE4IAc4JJEPC
+
+

@@ -6,13 +6,17 @@ updates the database status to PAID, and immediately delivers the ChatGPT Plus
 package to the customer via Telegram.
 """
 
+from datetime import datetime
 import json
 import logging
+import time
 from aiohttp import web
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
-from config import ADMIN_CHAT_ID, SEPAY_API_KEY, get_admin_ids
+from config import ADMIN_CHAT_ID, PATO_NETFLIX_PRODUCT_ID, SEPAY_API_KEY, get_admin_ids
 from database.database import get_db
+from database.models import ProductAccount
+from services.pato_service import PatoService
 from services.payment_service import PaymentService
 
 logger = logging.getLogger(__name__)
@@ -111,43 +115,15 @@ class WebhookServer:
                 gateway=gateway,
             )
 
-            # If payment succeeded and we have delivery credentials to send
-            if success and delivery_text and order and order.user:
-                customer_telegram_id = order.user.telegram_id
-                customer_name = order.user.full_name or "Khách hàng"
-
-                # Send package delivery message directly to customer via Telegram
-                try:
-                    await self.bot.send_message(
-                        chat_id=customer_telegram_id,
-                        text=delivery_text,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
-                    logger.info("Delivered ChatGPT Plus package to user %s for Order #%s", customer_telegram_id, order_id)
-                except Exception as send_err:
-                    logger.error("Failed to send Telegram delivery message to %s: %s", customer_telegram_id, send_err)
-
-                # Send alert to all configured Admins
-                admin_ids = get_admin_ids()
-                if admin_ids:
-                    admin_alert = (
-                        f"🔔 <b>THÔNG BÁO TIỀN VỀ THÀNH CÔNG!</b>\n\n"
-                        f"• Đơn hàng: <b>#{order_id}</b>\n"
-                        f"• Khách hàng: <b>{customer_name}</b> (ID: <code>{customer_telegram_id}</code>)\n"
-                        f"• Số tiền: <b>{amount:,.0f} VND</b>\n"
-                        f"• Cổng: <b>{gateway}</b> | Mã GD: <code>{ref_code}</code>\n"
-                        f"• Trạng thái: <i>Hệ thống đã tự động gửi tài khoản cho khách.</i>"
-                    )
-                    for aid in admin_ids:
-                        try:
-                            await self.bot.send_message(
-                                chat_id=aid,
-                                text=admin_alert,
-                                parse_mode="HTML",
-                            )
-                        except Exception as admin_err:
-                            logger.warning("Failed to notify admin %s: %s", aid, admin_err)
+            if success and order and order.user:
+                await self._fulfill_and_deliver(
+                    db=db,
+                    order=order,
+                    amount=amount,
+                    ref_code=ref_code,
+                    gateway=gateway,
+                    initial_delivery_text=delivery_text or "",
+                )
 
         return web.json_response({
             "success": success,
@@ -158,7 +134,7 @@ class WebhookServer:
     async def handle_fake_payment(self, request: web.Request) -> web.Response:
         """Endpoint to simulate a bank payment for testing without real money.
 
-        Accepts: {"order_id": 1, "amount": 275000} (amount is optional, defaults to order total)
+        Accepts: {"order_id": 1, "amount": 270000} (amount is optional, defaults to order total)
         """
         try:
             payload = await request.json()
@@ -185,12 +161,14 @@ class WebhookServer:
                 gateway="TestGateway",
             )
 
-            if success and delivery_text and order and order.user:
-                await self.bot.send_message(
-                    chat_id=order.user.telegram_id,
-                    text=delivery_text,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True,
+            if success and order and order.user:
+                await self._fulfill_and_deliver(
+                    db=db,
+                    order=order,
+                    amount=amount,
+                    ref_code="TEST_SIMULATION_2026",
+                    gateway="TestGateway",
+                    initial_delivery_text=delivery_text or "",
                 )
 
         return web.json_response({
@@ -199,3 +177,150 @@ class WebhookServer:
             "simulated_amount": amount,
             "message": message,
         })
+
+    async def _fulfill_and_deliver(
+        self,
+        db,
+        order,
+        amount: int,
+        ref_code: str,
+        gateway: str,
+        initial_delivery_text: str,
+    ) -> None:
+        """Handle on-demand Pato fulfillment for Netflix and deliver credentials to customer."""
+        if not order or not order.user:
+            return
+
+        customer_telegram_id = order.user.telegram_id
+        customer_name = order.user.full_name or "Khách hàng"
+        first_item = order.items[0] if order.items else None
+        is_net = bool(
+            first_item
+            and first_item.product
+            and (
+                "netflix" in first_item.product.name.lower()
+                or first_item.product_id == PATO_NETFLIX_PRODUCT_ID
+            )
+        )
+
+        delivery_text = initial_delivery_text
+        pato_order_id = None
+
+        # If this is Netflix, Pato is configured, and no stock was previously allocated from local DB:
+        if is_net and PatoService.is_configured() and not order.delivered_accounts:
+            # 1. Send waiting notification to customer
+            waiting_msg = None
+            try:
+                waiting_msg = await self.bot.send_message(
+                    chat_id=customer_telegram_id,
+                    text=(
+                        f"✅ <b>ĐÃ NHẬN THANH TOÁN ĐƠN HÀNG #{order.id}!</b>\n\n"
+                        f"⏳ <i>Vui lòng đợi trong khi shop lấy link...</i>"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as w_err:
+                logger.debug("Could not send waiting message: %s", w_err)
+
+            # 2. Call Pato API to get login links
+            try:
+                item_qty = first_item.quantity if first_item else 1
+                delivered_accs = []
+                last_pato_order_id = ""
+
+                for idx in range(item_qty):
+                    pato_req_id = f"DH{order.id}-{int(time.time())}-{idx+1}"
+                    pato_res = await PatoService.create_order(request_id=pato_req_id)
+                    login_link = pato_res.get("login_link")
+                    p_ord_id = pato_res.get("order_id", "")
+                    if p_ord_id:
+                        last_pato_order_id = p_ord_id
+
+                    if login_link:
+                        new_acc = ProductAccount(
+                            product_id=first_item.product_id,
+                            account=login_link,
+                            raw_data=login_link,
+                            status="SOLD",
+                            order_id=order.id,
+                            sold_at=datetime.now(),
+                            note=f"PATO:{p_ord_id}",
+                        )
+                        db.add(new_acc)
+                        delivered_accs.append(new_acc)
+
+                db.commit()
+                db.refresh(order)
+
+                if last_pato_order_id:
+                    pato_order_id = last_pato_order_id
+
+                if delivered_accs:
+                    delivery_text = PaymentService.generate_delivery_message(
+                        order, first_item.product.name, delivered_accs
+                    )
+
+                if waiting_msg:
+                    try:
+                        await waiting_msg.delete()
+                    except Exception:
+                        pass
+
+            except Exception as p_err:
+                logger.error("Failed to fulfill Pato Netflix order #%s: %s", order.id, p_err)
+                if waiting_msg:
+                    try:
+                        await waiting_msg.edit_text(
+                            f"⚠️ <b>LƯU Ý VỀ ĐƠN HÀNG #{order.id}:</b>\n\n"
+                            f"Hệ thống tạo link tự động đang bận hoặc bảo trì nhẹ.\n"
+                            f"Đừng lo lắng, kỹ thuật viên shop đã nhận được thông báo và sẽ gửi link thủ công cho bạn trong ít phút!\n"
+                            f"Hỗ trợ: @Neitman275 hoặc @Huyneko",
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
+
+        # Check if order has Pato warranty
+        has_pato_warranty = any(
+            (acc.note and "PATO:" in acc.note) for acc in order.delivered_accounts
+        ) or bool(pato_order_id)
+
+        keyboard_buttons = []
+        if is_net:
+            keyboard_buttons.append([InlineKeyboardButton("🍿 Hướng dẫn đăng nhập Netflix", callback_data="menu_guide_netflix")])
+            if has_pato_warranty:
+                keyboard_buttons.append([InlineKeyboardButton("🔄 Đổi link / Bảo hành (1 Giờ)", callback_data=f"pato_warranty_{order.id}")])
+
+        delivery_markup = InlineKeyboardMarkup(keyboard_buttons) if keyboard_buttons else None
+
+        # Send delivery message to customer
+        try:
+            await self.bot.send_message(
+                chat_id=customer_telegram_id,
+                text=delivery_text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=delivery_markup,
+            )
+            logger.info("Delivered order #%s package to user %s", order.id, customer_telegram_id)
+        except Exception as send_err:
+            logger.error("Failed to send Telegram delivery message to %s: %s", customer_telegram_id, send_err)
+
+        # Send alert to Admins
+        admin_ids = get_admin_ids()
+        if admin_ids:
+            pato_extra = f"\n• Phiên Pato: <code>{pato_order_id}</code>" if pato_order_id else ""
+            admin_alert = (
+                f"🔔 <b>THÔNG BÁO TIỀN VỀ THÀNH CÔNG!</b>\n\n"
+                f"• Đơn hàng: <b>#{order.id}</b>\n"
+                f"• Khách hàng: <b>{customer_name}</b> (ID: <code>{customer_telegram_id}</code>)\n"
+                f"• Số tiền: <b>{amount:,.0f} VND</b>\n"
+                f"• Cổng: <b>{gateway}</b> | Mã GD: <code>{ref_code}</code>{pato_extra}\n"
+                f"• Trạng thái: <i>Hệ thống đã tự động xuất link / tài khoản cho khách.</i>"
+            )
+            for aid in admin_ids:
+                try:
+                    await self.bot.send_message(chat_id=aid, text=admin_alert, parse_mode="HTML")
+                except Exception as admin_err:
+                    logger.warning("Failed to notify admin %s: %s", aid, admin_err)
+

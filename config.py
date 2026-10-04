@@ -34,6 +34,12 @@ WEBHOOK_HOST: str = os.getenv("WEBHOOK_HOST", "0.0.0.0").strip()
 WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8000").strip())
 SEPAY_API_KEY: str = os.getenv("SEPAY_API_KEY", "").strip()
 
+# Pato AI Partner API Configuration (Netflix automated link fulfillment)
+PATO_BASE_URL: str = os.getenv("PATO_BASE_URL", "https://api.patoai.dpdns.org").strip().rstrip("/")
+PATO_CLIENT_ID: str = os.getenv("PATO_CLIENT_ID", "PC2610043E94BA7BA7").strip()
+PATO_API_KEY: str = os.getenv("PATO_API_KEY", "pato_live_tXBjdI-JDrFyH7lal3OtrCS_w9tGHh04HQi6Cy9NrUM").strip()
+PATO_NETFLIX_PRODUCT_ID: int = int(os.getenv("PATO_NETFLIX_PRODUCT_ID", "5").strip())
+
 
 def get_admin_ids() -> list[int]:
     """Return list of allowed admin Telegram user IDs parsed from environment variables.
@@ -109,8 +115,12 @@ def get_product_image(product_id: int, product_name: str = "") -> Path | None:
     keyword_map = {
         "bảo hành full": "chatgpt_plus_warranty",
         "không bảo hành": "chatgpt_plus_no_warranty",
+        "offer": "chatgpt_plus_trial",
+        "trial": "chatgpt_plus_trial",
         "full": "chatgpt_plus_warranty",
         "plus": "chatgpt_plus_warranty",
+        "gmail": "gmail",
+        "netflix": "netflix",
     }
     for kw, stem in keyword_map.items():
         if kw in norm_name:

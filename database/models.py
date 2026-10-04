@@ -115,7 +115,7 @@ class ProductAccount(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
 
     # Credentials
-    account = Column(String(255), nullable=True, index=True)  # Email or username (e.g. biradarguru37@googlemail.com)
+    account = Column(Text, nullable=True, index=True)  # Email, username, or login URL (e.g. Netflix token link)
     password = Column(String(255), nullable=True)  # Password (e.g. CHATLGBT9999)
     two_factor = Column(String(255), nullable=True)  # 2FA Secret Key (e.g. E6M7ATQ7QHEALOH7BU2RN6YZRQNBMBE6)
     raw_data = Column(Text, nullable=False)  # Full raw line formatted as entered
