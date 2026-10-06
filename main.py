@@ -28,8 +28,13 @@ from handlers.checkout_handler import (
     payment_confirm_callback_handler,
 )
 from handlers.start_handler import (
+    account_detail_command,
+    accounts_callback_handler,
+    accounts_command,
     add_stock_command,
+    delete_account_command,
     language_command,
+    maintenance_command,
     menu_callback_handler,
     myid_command,
     netflix_guide_command,
@@ -44,6 +49,14 @@ from handlers.start_handler import (
 )
 from services.order_service import OrderService
 from webhook_server import WebhookServer
+
+# Ensure UTF-8 logging on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # Configure logging format according to best practices
 logging.basicConfig(
@@ -185,12 +198,19 @@ async def run_application() -> None:
     application.add_handler(CommandHandler(["products", "shop"], products_command))
     application.add_handler(CommandHandler("myid", myid_command))
     application.add_handler(CommandHandler("stock", stock_command))
+    application.add_handler(CommandHandler(["accounts", "accs", "view_accounts", "product_accounts"], accounts_command))
+    application.add_handler(CommandHandler(["account", "acc"], account_detail_command))
+    application.add_handler(CommandHandler(["delete", "delacc", "del_account"], delete_account_command))
     application.add_handler(CommandHandler("addstock", add_stock_command))
     application.add_handler(CommandHandler("test_pay", test_pay_command))
+    application.add_handler(CommandHandler(["baotri", "maintenance", "broadcast_maintenance"], maintenance_command))
     application.add_handler(CommandHandler(["netflix", "hd_netflix", "netflix_guide"], netflix_guide_command))
 
     # Main menu, Netflix guide & Language inline buttons callback handler
     application.add_handler(CallbackQueryHandler(menu_callback_handler, pattern=r"^(menu_|set_lang_|guide_)"))
+
+    # Accounts management and deletion callback handler
+    application.add_handler(CallbackQueryHandler(accounts_callback_handler, pattern=r"^(acc_|del_acc_|admin_)"))
 
     # Payment confirmation callback handler ("paid_order_<id>")
     application.add_handler(

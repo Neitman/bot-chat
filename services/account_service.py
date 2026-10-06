@@ -12,7 +12,7 @@ import struct
 import time
 from typing import Optional, Tuple
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from config import PATO_NETFLIX_PRODUCT_ID
 from database.models import Order, OrderItem, Product, ProductAccount
@@ -158,20 +158,20 @@ class AccountService:
         if not product:
             return False, f"Không tìm thấy sản phẩm #{product_id}.", None
 
-        # Check for duplicate available account for this product
+        # Check for duplicate account for this product (check both AVAILABLE and SOLD to prevent duplicate sales)
         existing = (
             db.query(ProductAccount)
             .filter(
                 ProductAccount.product_id == product_id,
                 ProductAccount.account == parsed["account"],
-                ProductAccount.status == "AVAILABLE",
             )
             .first()
         )
         if existing:
+            status_desc = "đang có sẵn trong kho" if existing.status == "AVAILABLE" else f"đã từng bán cho Đơn #{existing.order_id}"
             return (
                 False,
-                f"Tài khoản '{parsed['account']}' đã tồn tại trong kho (ID #{existing.id}).",
+                f"Tài khoản '{parsed['account']}' {status_desc} (ID #{existing.id}), bỏ qua để tránh bán trùng.",
                 existing,
             )
 
@@ -236,13 +236,12 @@ class AccountService:
                 duplicate_count += 1
                 continue
 
-            # Check existing available account in DB
+            # Check existing account in DB (check all statuses to prevent duplicate sales)
             exists_in_db = (
                 db.query(ProductAccount)
                 .filter(
                     ProductAccount.product_id == product_id,
                     ProductAccount.account == parsed["account"],
-                    ProductAccount.status == "AVAILABLE",
                 )
                 .first()
             )
@@ -533,6 +532,102 @@ class AccountService:
         for p in products:
             summary.append(AccountService.get_product_stats(db, p.id))
         return summary
+
+    @staticmethod
+    def get_account_by_id(db: Session, account_id: int) -> Optional[ProductAccount]:
+        """Retrieve a specific product account record by primary key ID."""
+        return (
+            db.query(ProductAccount)
+            .options(joinedload(ProductAccount.product), joinedload(ProductAccount.order))
+            .filter(ProductAccount.id == account_id)
+            .first()
+        )
+
+    @staticmethod
+    def delete_account_by_id(db: Session, account_id: int) -> Tuple[bool, str, Optional[dict]]:
+        """Delete an account record from product_accounts table and update inventory stock."""
+        acc = db.query(ProductAccount).filter(ProductAccount.id == account_id).first()
+        if not acc:
+            return False, f"Không tìm thấy tài khoản có ID #{account_id}.", None
+
+        prod_id = acc.product_id
+        prod_name = acc.product.name if acc.product else f"Sản phẩm #{prod_id}"
+        acc_info = {
+            "id": acc.id,
+            "product_id": prod_id,
+            "product_name": prod_name,
+            "account": acc.account or "(Trống)",
+            "status": acc.status,
+            "order_id": acc.order_id,
+            "note": acc.note,
+        }
+
+        db.delete(acc)
+        db.commit()
+
+        # Resync stock for pre-stocked products (excluding integer-managed products like Netflix)
+        if prod_id != PATO_NETFLIX_PRODUCT_ID:
+            AccountService.sync_product_stock(db, prod_id)
+
+        # Retrieve current available stock for the product
+        stats = AccountService.get_product_stats(db, prod_id)
+        acc_info["current_stock"] = stats["available_stock"]
+
+        return True, f"Đã xóa tài khoản #{account_id} thành công.", acc_info
+
+    @staticmethod
+    def list_accounts_paginated(
+        db: Session,
+        page: int = 1,
+        page_size: int = 6,
+        product_id: Optional[int] = None,
+        status: Optional[str] = None,
+    ) -> dict:
+        """Fetch paginated product account records with status/product filtering and totals."""
+        base_query = db.query(ProductAccount)
+        if product_id is not None:
+            base_query = base_query.filter(ProductAccount.product_id == product_id)
+        if status:
+            base_query = base_query.filter(ProductAccount.status == status.upper())
+
+        total = base_query.count()
+        import math
+        total_pages = max(1, math.ceil(total / page_size))
+        page = max(1, min(page, total_pages))
+        offset = (page - 1) * page_size
+
+        items = (
+            base_query.options(joinedload(ProductAccount.product), joinedload(ProductAccount.order))
+            .order_by(ProductAccount.id.desc())
+            .offset(offset)
+            .limit(page_size)
+            .all()
+        )
+
+        avail_count = (
+            db.query(func.count(ProductAccount.id))
+            .filter(ProductAccount.status == "AVAILABLE")
+            .scalar()
+            or 0
+        )
+        sold_count = (
+            db.query(func.count(ProductAccount.id))
+            .filter(ProductAccount.status == "SOLD")
+            .scalar()
+            or 0
+        )
+
+        return {
+            "items": items,
+            "total": total,
+            "total_pages": total_pages,
+            "page": page,
+            "page_size": page_size,
+            "available_count": avail_count,
+            "sold_count": sold_count,
+            "filter_product_id": product_id,
+            "filter_status": status,
+        }
 
     @staticmethod
     def format_delivery_message(

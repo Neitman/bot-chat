@@ -40,6 +40,11 @@ PATO_CLIENT_ID: str = os.getenv("PATO_CLIENT_ID", "PC2610043E94BA7BA7").strip()
 PATO_API_KEY: str = os.getenv("PATO_API_KEY", "pato_live_tXBjdI-JDrFyH7lal3OtrCS_w9tGHh04HQi6Cy9NrUM").strip()
 PATO_NETFLIX_PRODUCT_ID: int = int(os.getenv("PATO_NETFLIX_PRODUCT_ID", "5").strip())
 
+# PayOS Payment Gateway Configuration (Free VietQR Open Banking Gateway)
+PAYOS_CLIENT_ID: str = os.getenv("PAYOS_CLIENT_ID", "").strip()
+PAYOS_API_KEY: str = os.getenv("PAYOS_API_KEY", "").strip()
+PAYOS_CHECKSUM_KEY: str = os.getenv("PAYOS_CHECKSUM_KEY", "").strip()
+
 
 def get_admin_ids() -> list[int]:
     """Return list of allowed admin Telegram user IDs parsed from environment variables.

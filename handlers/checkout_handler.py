@@ -21,7 +21,7 @@ from telegram.warnings import PTBUserWarning
 # Filter PTB conversation warning for mixed callbacks and text handlers
 warnings.filterwarnings("ignore", category=PTBUserWarning)
 
-from config import get_product_image
+from config import BANK_ACCOUNT_NAME, BANK_ID, get_product_image
 from database.database import get_db
 from services.account_service import AccountService
 from services.i18n import get_user_lang, t
@@ -336,17 +336,49 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 order_id = order.id
                 total_amount = order.total_amount
 
+            # Check and create PayOS payment link if configured
+            payos_link = None
+            try:
+                from services.payos_service import PayOSService
+                if PayOSService.is_configured():
+                    payos_link = PayOSService.create_payment_link(
+                        order_id=order_id,
+                        amount=total_amount,
+                        description=f"DH {order_id}",
+                        item_name=checkout_data["product_name"],
+                        quantity=checkout_data["quantity"],
+                    )
+            except Exception as p_err:
+                logger.warning("Could not create PayOS payment link for order #%s: %s", order_id, p_err)
+
             # Generate VietQR payment URL (compatible with all VN banking apps & MoMo)
-            qr_url = OrderService.generate_vietqr_url(order_id=order_id, total_amount=total_amount)
+            if payos_link and payos_link.get("account_number"):
+                b_bin = payos_link.get("bin") or BANK_ID
+                qr_url = OrderService.generate_vietqr_url(
+                    order_id=order_id,
+                    total_amount=total_amount,
+                    bank_id=str(b_bin),
+                    account_no=str(payos_link["account_number"]),
+                    account_name=str(payos_link.get("account_name") or BANK_ACCOUNT_NAME),
+                )
+            else:
+                qr_url = OrderService.generate_vietqr_url(order_id=order_id, total_amount=total_amount)
 
             # Clear checkout session data
             context.user_data.pop("checkout", None)
 
             # Payment instruction buttons
-            payment_keyboard = [
-                [InlineKeyboardButton(t("btn_paid_confirm", lang), callback_data=f"paid_order_{order_id}")],
-                [InlineKeyboardButton(t("btn_back", lang), callback_data="menu_back")],
-            ]
+            payment_keyboard = []
+            if payos_link and payos_link.get("checkout_url"):
+                payment_keyboard.append([
+                    InlineKeyboardButton("💳 Mở cổng thanh toán PayOS", url=payos_link["checkout_url"])
+                ])
+            payment_keyboard.append([
+                InlineKeyboardButton(t("btn_paid_confirm", lang), callback_data=f"paid_order_{order_id}")
+            ])
+            payment_keyboard.append([
+                InlineKeyboardButton(t("btn_back", lang), callback_data="menu_back")
+            ])
 
             caption = t(
                 "order_created_caption",

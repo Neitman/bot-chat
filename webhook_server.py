@@ -48,14 +48,6 @@ class WebhookServer:
 
     async def handle_payment_webhook(self, request: web.Request) -> web.Response:
         """Handle incoming bank transaction webhooks (SePay / PayOS format)."""
-        # 1. Verify Authorization Header if SEPAY_API_KEY is configured
-        if SEPAY_API_KEY:
-            auth_header = request.headers.get("Authorization", "").strip()
-            # Compatible with "Apikey <KEY>", "Bearer <KEY>", or exact key
-            if not auth_header or SEPAY_API_KEY not in auth_header:
-                logger.warning("Unauthorized webhook request rejected. Provided auth header: %s", auth_header)
-                return web.json_response({"error": "Unauthorized"}, status=401)
-
         try:
             payload = await request.json()
             logger.info("Received payment webhook payload: %s", json.dumps(payload, ensure_ascii=False))
@@ -63,35 +55,67 @@ class WebhookServer:
             logger.error("Failed to parse JSON body: %s", exc)
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
-        # 2. Extract transfer fields (compatible with SePay, PayOS, or generic)
+        # Handle PayOS webhook URL confirmation test
+        if "webhookUrl" in payload or payload.get("desc") == "Confirm webhook":
+            logger.info("PayOS Webhook URL confirmed successfully: %s", payload)
+            return web.json_response({"success": True, "message": "PayOS Webhook confirmed"}, status=200)
+
+        # 1. Determine gateway & authenticate
         content = ""
         amount = 0
         ref_code = ""
         gateway = "Bank"
 
-        # Check SePay standard payload
-        if "transferAmount" in payload or "content" in payload:
-            content = str(payload.get("content") or payload.get("description") or "")
-            amount = int(payload.get("transferAmount") or 0)
-            ref_code = str(payload.get("referenceCode") or payload.get("id") or "")
-            gateway = str(payload.get("gateway") or "SePay")
+        # Check PayOS payload format (contains 'data' object and 'signature')
+        if "data" in payload and isinstance(payload["data"], dict) and "signature" in payload:
+            from services.payos_service import PayOSService
+            if PayOSService.is_configured():
+                is_valid, verified_data = PayOSService.verify_webhook(payload)
+                if not is_valid or not verified_data:
+                    logger.warning("PayOS webhook signature verification failed.")
+                    return web.json_response({"error": "Invalid PayOS signature"}, status=400)
+                payos_data = verified_data
+            else:
+                payos_data = payload["data"]
 
-        # Check PayOS payload format
-        elif "data" in payload and isinstance(payload["data"], dict):
-            payos_data = payload["data"]
             content = str(payos_data.get("description") or "")
             amount = int(payos_data.get("amount") or 0)
             ref_code = str(payos_data.get("reference") or payos_data.get("orderCode") or "")
             gateway = "PayOS"
 
+        # Check SePay standard payload
+        elif "transferAmount" in payload or "content" in payload:
+            # Verify SePay API key if configured
+            if SEPAY_API_KEY:
+                auth_header = request.headers.get("Authorization", "").strip()
+                if not auth_header or SEPAY_API_KEY not in auth_header:
+                    logger.warning("Unauthorized SePay webhook rejected. Header: %s", auth_header)
+                    return web.json_response({"error": "Unauthorized"}, status=401)
+
+            content = str(payload.get("content") or payload.get("description") or "")
+            amount = int(payload.get("transferAmount") or 0)
+            ref_code = str(payload.get("referenceCode") or payload.get("id") or "")
+            gateway = str(payload.get("gateway") or "SePay")
+
         # Fallback to direct keys
         else:
+            if SEPAY_API_KEY:
+                auth_header = request.headers.get("Authorization", "").strip()
+                if not auth_header or SEPAY_API_KEY not in auth_header:
+                    logger.warning("Unauthorized generic webhook rejected. Header: %s", auth_header)
+                    return web.json_response({"error": "Unauthorized"}, status=401)
+
             content = str(payload.get("content") or payload.get("description") or payload.get("order_id") or "")
             amount = int(payload.get("amount") or 0)
             ref_code = str(payload.get("ref") or payload.get("referenceCode") or "")
 
-        # 3. Extract order ID from content (e.g. 'DH 1' -> 1)
+        # 3. Extract order ID from content (e.g. 'DH 1' -> 1 or from PayOS orderCode)
         order_id = PaymentService.extract_order_id(content)
+        if not order_id and gateway == "PayOS":
+            try:
+                order_id = int(payload.get("data", {}).get("orderCode", 0))
+            except (ValueError, TypeError):
+                pass
         if not order_id and "order_id" in payload:
             try:
                 order_id = int(payload["order_id"])

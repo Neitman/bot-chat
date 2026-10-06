@@ -94,6 +94,10 @@ class BroadcastService:
                 warranty_badge = t("warranty_full_badge", user_lang)
             elif "offer" in p_lower or "trial" in p_lower:
                 warranty_badge = t("warranty_offer_badge", user_lang)
+            elif "netflix" in p_lower:
+                warranty_badge = t("warranty_netflix_badge", user_lang)
+            elif "gmail" in p_lower:
+                warranty_badge = t("warranty_gmail_badge", user_lang)
             else:
                 warranty_badge = t("warranty_none_badge", user_lang)
 
@@ -218,6 +222,150 @@ class BroadcastService:
         }
 
     @classmethod
+    async def broadcast_maintenance(
+        cls,
+        bot: Bot,
+        duration_minutes: int = 30,
+        admin_chat_id: Optional[int] = None,
+        custom_vi: Optional[str] = None,
+        custom_en: Optional[str] = None,
+    ) -> dict:
+        """Broadcast system maintenance notification to all registered users.
+
+        Args:
+            bot: Active Telegram Bot instance.
+            duration_minutes: Estimated maintenance duration in minutes (default 30).
+            admin_chat_id: Optional admin ID to send execution summary.
+            custom_vi: Optional custom message in Vietnamese.
+            custom_en: Optional custom message in English.
+
+        Returns:
+            Dict containing broadcast metrics: total, sent, failed, blocked.
+        """
+        with get_db() as db:
+            users = db.query(User).all()
+            user_list = [
+                {"id": u.id, "telegram_id": u.telegram_id, "language": u.language, "name": u.full_name}
+                for u in users
+            ]
+
+        total_users = len(user_list)
+        if total_users == 0:
+            logger.info("Broadcast skipped: No registered users in database.")
+            return {"total": 0, "sent": 0, "failed": 0, "blocked": 0}
+
+        logger.info(
+            "Starting maintenance broadcast (%s mins) to %s users...",
+            duration_minutes,
+            total_users,
+        )
+
+        default_vi = (
+            "🛠️ <b>THÔNG BÁO BẢO TRÌ HỆ THỐNG</b> ⚙️\n\n"
+            "Kính gửi quý khách hàng,\n"
+            "Hệ thống Shop Bot đang tiến hành bảo trì định kỳ, nâng cấp hạ tầng & tối ưu hóa cổng thanh toán.\n\n"
+            f"⏱ <b>Thời gian dự kiến:</b> ~{duration_minutes} phút\n"
+            "📌 <b>Trạng thái:</b> Tạm ngừng nhận đơn hàng và kích hoạt tài khoản trong thời gian này.\n\n"
+            "Sau khi hoàn tất, hệ thống sẽ tự động hoạt động bình thường trở lại để phục vụ quý khách.\n"
+            "Rất xin lỗi quý khách vì sự bất tiện này. Cảm ơn quý khách đã tin tưởng và đồng hành! 🙏"
+        )
+
+        default_en = (
+            "🛠️ <b>SYSTEM MAINTENANCE NOTICE</b> ⚙️\n\n"
+            "Dear Valued Customers,\n"
+            "Our Shop Bot is currently undergoing scheduled maintenance and payment gateway optimization.\n\n"
+            f"⏱ <b>Estimated duration:</b> ~{duration_minutes} minutes\n"
+            "📌 <b>Status:</b> Ordering and account delivery are temporarily paused during maintenance.\n\n"
+            "The system will automatically resume normal operations once maintenance is completed.\n"
+            "We sincerely apologize for any inconvenience. Thank you for your patience and understanding! 🙏"
+        )
+
+        sent_count = 0
+        failed_count = 0
+        blocked_count = 0
+
+        for user_info in user_list:
+            chat_id = user_info["telegram_id"]
+            user_lang = user_info["language"] if user_info["language"] in ("vi", "en") else "vi"
+
+            text = (custom_en or default_en) if user_lang == "en" else (custom_vi or default_vi)
+
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode="HTML",
+                )
+                sent_count += 1
+            except Forbidden:
+                logger.info("User %s blocked the bot. Skipping.", chat_id)
+                blocked_count += 1
+                failed_count += 1
+            except TelegramError as tg_err:
+                logger.warning("Telegram error broadcasting maintenance to %s: %s", chat_id, tg_err)
+                failed_count += 1
+            except Exception as exc:
+                logger.error("Unexpected error broadcasting maintenance to %s: %s", chat_id, exc)
+                failed_count += 1
+
+            # Small delay to comply with Telegram rate limits
+            await asyncio.sleep(0.05)
+
+        logger.info(
+            "Maintenance broadcast finished: %s total, %s sent, %s failed (%s blocked)",
+            total_users,
+            sent_count,
+            failed_count,
+            blocked_count,
+        )
+
+        # Notify admin(s) of broadcast result
+        target_admins = [admin_chat_id] if admin_chat_id else get_admin_ids()
+        if target_admins:
+            summary_text = (
+                "📢 <b>KẾT QUẢ GỬI THÔNG BÁO BẢO TRÌ HỆ THỐNG:</b>\n\n"
+                f"• Thời gian dự kiến: <b>{duration_minutes} phút</b>\n"
+                f"• Tổng số khách hàng: <b>{total_users}</b>\n"
+                f"• Gửi thành công: <b>{sent_count}</b>\n"
+                f"• Thất bại / Đã chặn bot: <b>{failed_count}</b> (chặn bot: <b>{blocked_count}</b>)\n"
+            )
+            for aid in target_admins:
+                if not aid:
+                    continue
+                try:
+                    await bot.send_message(
+                        chat_id=aid,
+                        text=summary_text,
+                        parse_mode="HTML",
+                    )
+                except Exception as admin_err:
+                    logger.warning("Failed to send broadcast summary to admin %s: %s", aid, admin_err)
+
+        return {
+            "total": total_users,
+            "sent": sent_count,
+            "failed": failed_count,
+            "blocked": blocked_count,
+        }
+
+    @classmethod
+    def broadcast_maintenance_sync(cls, duration_minutes: int = 30, admin_chat_id: Optional[int] = None) -> dict:
+        """Synchronous wrapper to execute maintenance broadcast from standalone CLI tools."""
+        if not TELEGRAM_TOKEN:
+            logger.warning("TELEGRAM_TOKEN is not configured; cannot broadcast.")
+            return {"total": 0, "sent": 0, "failed": 0, "blocked": 0}
+
+        async def _run():
+            async with Bot(token=TELEGRAM_TOKEN) as bot:
+                return await cls.broadcast_maintenance(bot, duration_minutes, admin_chat_id)
+
+        try:
+            return asyncio.run(_run())
+        except Exception as exc:
+            logger.error("Failed running synchronous maintenance broadcast: %s", exc)
+            return {"total": 0, "sent": 0, "failed": 0, "blocked": 0, "error": str(exc)}
+
+    @classmethod
     def broadcast_restock_sync(cls, product_id: int, added_count: int) -> dict:
         """Synchronous wrapper to execute broadcast from standalone CLI tools."""
         if not TELEGRAM_TOKEN:
@@ -233,3 +381,4 @@ class BroadcastService:
         except Exception as exc:
             logger.error("Failed running synchronous broadcast: %s", exc)
             return {"total": 0, "sent": 0, "failed": 0, "blocked": 0, "error": str(exc)}
+

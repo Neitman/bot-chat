@@ -164,6 +164,11 @@ STRINGS = {
         "delivery_footer": "Cảm ơn bạn đã lựa chọn cửa hàng! Chúc bạn có trải nghiệm tuyệt vời cùng dịch vụ.",
         
         # Restock Notification
+        "warranty_full_badge": "Bảo hành trọn thời gian sử dụng",
+        "warranty_offer_badge": "Gói trải nghiệm (Không bảo hành)",
+        "warranty_netflix_badge": "HSD 30 Ngày (Hỗ trợ 1 đổi 1 trong 1 Giờ)",
+        "warranty_gmail_badge": "Bao login lần đầu (Live 15p - 48h)",
+        "warranty_none_badge": "Bảo hành tiêu chuẩn shop",
         "restock_broadcast_caption": (
             "🎉 <b>HÀNG MỚI ĐÃ VỀ KHO!</b> 📦\n\n"
             "Shop vừa nạp thêm tài khoản cho sản phẩm:\n"
@@ -327,6 +332,11 @@ STRINGS = {
         "delivery_footer": "Thank you for choosing our store! Enjoy your experience.",
         
         # Restock Notification
+        "warranty_full_badge": "Full Warranty for active duration",
+        "warranty_offer_badge": "Trial Package (No Warranty)",
+        "warranty_netflix_badge": "30-Day Validity (1-Hour link replacement)",
+        "warranty_gmail_badge": "First Login Warranty (Live 15m - 48h)",
+        "warranty_none_badge": "Standard Shop Warranty",
         "restock_broadcast_caption": (
             "🎉 <b>RESTOCK ALERT: NEW ACCOUNTS AVAILABLE!</b> 📦\n\n"
             "We have just restocked accounts for:\n"

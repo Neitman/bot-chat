@@ -19,6 +19,7 @@ from telegram import (
 )
 from datetime import datetime
 import time
+from typing import Optional, Tuple
 from telegram.ext import Application, ContextTypes
 
 from config import ADMIN_CHAT_ID, PATO_NETFLIX_PRODUCT_ID, get_admin_ids, get_store_banner, is_admin_user
@@ -951,8 +952,11 @@ async def setup_bot_commands(application: Application) -> None:
         BotCommand("language", "Đổi ngôn ngữ"),
         BotCommand("myid", "Xem ID Telegram của bạn"),
         BotCommand("stock", "Báo cáo tồn kho & doanh thu (Admin)"),
+        BotCommand("accounts", "Xem chi tiết bảng product_accounts (Admin)"),
+        BotCommand("delete", "Xóa tài khoản khỏi DB theo ID (Admin)"),
         BotCommand("addstock", "Nạp tài khoản vào kho (Admin)"),
         BotCommand("test_pay", "Giả lập duyệt thanh toán test (Admin)"),
+        BotCommand("baotri", "Thông báo bảo trì hệ thống cho khách (Admin)"),
         BotCommand("cancel", "Hủy thao tác hiện tại"),
     ]
 
@@ -1072,6 +1076,34 @@ async def test_pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 @admin_required
+async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command to broadcast maintenance notice: /baotri [phút] or /maintenance [minutes] (Admin only)."""
+    if not update.message:
+        return
+
+    duration = 30
+    if context.args:
+        try:
+            duration = int(context.args[0])
+        except ValueError:
+            await update.message.reply_html("⚠️ Số phút bảo trì không hợp lệ. Ví dụ: <code>/baotri 30</code>")
+            return
+
+    await update.message.reply_html(
+        f"⏳ <b>Bắt đầu gửi thông báo bảo trì ({duration} phút) đến toàn bộ khách hàng...</b>\n"
+        "Vui lòng đợi giây lát, bot sẽ gửi báo cáo kết quả ngay sau khi hoàn tất."
+    )
+
+    asyncio.create_task(
+        BroadcastService.broadcast_maintenance(
+            bot=context.bot,
+            duration_minutes=duration,
+            admin_chat_id=update.effective_chat.id if update.effective_chat else None,
+        )
+    )
+
+
+@admin_required
 async def stock_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin command to check digital inventory: /stock (Admin only)."""
     if not update.message:
@@ -1188,6 +1220,18 @@ async def add_stock_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 f"• Tồn kho mới: <b>{target_prod.stock_quantity}</b> sản phẩm\n"
             )
             await update.message.reply_html(report)
+
+            # Broadcast announcement if stock is set > 0
+            if set_exact > 0:
+                diff = (set_exact - old_qty) if set_exact > old_qty else set_exact
+                asyncio.create_task(
+                    BroadcastService.broadcast_restock(
+                        bot=context.bot,
+                        product_id=product_id,
+                        added_count=diff,
+                        admin_chat_id=update.effective_chat.id if update.effective_chat else None,
+                    )
+                )
             return
 
         if qty_change is not None:
@@ -1279,3 +1323,383 @@ async def myid_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
     await update.message.reply_html(msg)
+
+
+def format_accounts_list_view(data: dict) -> Tuple[str, InlineKeyboardMarkup]:
+    """Format paginated account list view with inline controls."""
+    items = data["items"]
+    total = data["total"]
+    total_pages = data["total_pages"]
+    page = data["page"]
+    avail_count = data["available_count"]
+    sold_count = data["sold_count"]
+    prod_filter = data.get("filter_product_id")
+    status_filter = data.get("filter_status")
+
+    filter_desc_parts = []
+    if prod_filter:
+        filter_desc_parts.append(f"SP #{prod_filter}")
+    if status_filter:
+        filter_desc_parts.append(f"Trạng thái: {status_filter}")
+    filter_desc = " | ".join(filter_desc_parts) if filter_desc_parts else "Tất cả"
+
+    lines = [
+        "📋 <b>QUẢN LÝ TÀI KHOẢN (BẢNG product_accounts)</b>",
+        f"• <b>Tổng cộng:</b> <b>{total}</b> (🟢 {avail_count} Sẵn sàng | 🔴 {sold_count} Đã bán)",
+        f"• <b>Bộ lọc:</b> <i>{filter_desc}</i> | <b>Trang:</b> {page}/{total_pages}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    if not items:
+        lines.append("<i>Không có tài khoản nào phù hợp với bộ lọc hiện tại.</i>")
+    else:
+        for acc in items:
+            prod_name = getattr(acc.product, "name", None) or f"Sản phẩm #{acc.product_id}"
+            st = (acc.status or "").upper()
+            if st == "AVAILABLE":
+                st_badge = "🟢 Sẵn sàng"
+            elif st == "SOLD":
+                order_txt = f" (Đơn #{acc.order_id})" if acc.order_id else ""
+                st_badge = f"🔴 Đã bán{order_txt}"
+            elif st == "RESERVED":
+                st_badge = "🟡 Tạm giữ"
+            else:
+                st_badge = f"⚪ {st}"
+
+            # Truncate long URLs or accounts for compact list view
+            acc_str = acc.account or "(Trống)"
+            if len(acc_str) > 42:
+                acc_display = acc_str[:40] + "..."
+            else:
+                acc_display = acc_str
+
+            note_str = f" | 🏷️ <i>{acc.note}</i>" if acc.note else ""
+            lines.append(
+                f"🔹 <b>[ID: #{acc.id}]</b> {st_badge}\n"
+                f"   • SP #{acc.product_id}: <i>{prod_name}</i>\n"
+                f"   • Tài khoản/Link: <code>{acc_display}</code>{note_str}\n"
+                f"   👉 <i>Gõ: <code>/account {acc.id}</code> (Xem chi tiết) | <code>/delete {acc.id}</code> (Xóa)</i>\n"
+            )
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("💡 <i>Gõ <code>/account &lt;ID&gt;</code> để xem mật khẩu & 2FA đầy đủ.</i>")
+    lines.append("🗑️ <i>Gõ <code>/delete &lt;ID&gt;</code> để xóa tài khoản ra khỏi DB.</i>")
+
+    # Keyboard buttons
+    keyboard = []
+    # Row 1: Pagination
+    nav_row = []
+    st_slug = status_filter.lower() if status_filter else "all"
+    pr_slug = str(prod_filter) if prod_filter else "0"
+
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("⬅️ Trước", callback_data=f"acc_page_{page-1}_{pr_slug}_{st_slug}"))
+    nav_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data=f"acc_page_{page}_{pr_slug}_{st_slug}"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("Sau ➡️", callback_data=f"acc_page_{page+1}_{pr_slug}_{st_slug}"))
+    if nav_row:
+        keyboard.append(nav_row)
+
+    # Row 2: Filter buttons
+    filter_row = [
+        InlineKeyboardButton("🟢 Sẵn sàng", callback_data=f"acc_page_1_{pr_slug}_available"),
+        InlineKeyboardButton("🔴 Đã bán", callback_data=f"acc_page_1_{pr_slug}_sold"),
+        InlineKeyboardButton("🔄 Tất cả", callback_data=f"acc_page_1_0_all"),
+    ]
+    keyboard.append(filter_row)
+
+    # Row 3: Admin quick links
+    keyboard.append([
+        InlineKeyboardButton("📊 Báo cáo kho (/stock)", callback_data="admin_view_stock"),
+        InlineKeyboardButton("➕ Nạp hàng (/addstock)", callback_data="admin_guide_addstock"),
+    ])
+
+    return "\n".join(lines), InlineKeyboardMarkup(keyboard)
+
+
+@admin_required
+async def accounts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command to inspect product_accounts table: /accounts [page/product_id/status]"""
+    if not update.message:
+        return
+
+    page = 1
+    product_id = None
+    status = None
+
+    if context.args:
+        for arg in context.args:
+            arg_lower = arg.strip().lower()
+            if arg_lower.isdigit():
+                val = int(arg_lower)
+                # If 1-5, likely product_id or page
+                if val <= 5 and product_id is None:
+                    product_id = val
+                else:
+                    page = val
+            elif arg_lower.startswith("p") and arg_lower[1:].isdigit():
+                page = int(arg_lower[1:])
+            elif arg_lower in ("available", "sold", "reserved", "error"):
+                status = arg_lower.upper()
+            elif arg_lower in ("netflix", "net"):
+                product_id = PATO_NETFLIX_PRODUCT_ID
+            elif arg_lower == "all":
+                product_id = None
+                status = None
+
+    with get_db() as db:
+        data = AccountService.list_accounts_paginated(
+            db=db,
+            page=page,
+            page_size=6,
+            product_id=product_id,
+            status=status,
+        )
+        text, markup = format_accounts_list_view(data)
+
+    await update.message.reply_html(text, reply_markup=markup, disable_web_page_preview=True)
+
+
+@admin_required
+async def account_detail_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command to inspect full details & credentials of an account: /account <id>"""
+    if not update.message:
+        return
+
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_html(
+            "⚠️ <b>CÁCH DÙNG LỆNH /account:</b>\n\n"
+            "<code>/account &lt;ID&gt;</code> (Ví dụ: <code>/account 32</code>)\n\n"
+            "<i>Xem đầy đủ thông tin, mật khẩu, 2FA, link và lịch sử bán của tài khoản.</i>"
+        )
+        return
+
+    account_id = int(context.args[0])
+    with get_db() as db:
+        acc = AccountService.get_account_by_id(db, account_id)
+        if not acc:
+            await update.message.reply_html(f"❌ Không tìm thấy tài khoản có ID <code>#{account_id}</code> trong database.")
+            return
+
+        prod_name = acc.product.name if acc.product else f"Sản phẩm #{acc.product_id}"
+        st = (acc.status or "").upper()
+        if st == "AVAILABLE":
+            st_badge = "🟢 SẴN SÀNG (AVAILABLE)"
+        elif st == "SOLD":
+            st_badge = "🔴 ĐÃ BÁN (SOLD)"
+        elif st == "RESERVED":
+            st_badge = "🟡 ĐANG TẠM GIỮ (RESERVED)"
+        else:
+            st_badge = f"⚪ {st}"
+
+        created_str = acc.created_at.strftime("%d/%m/%Y %H:%M:%S") if acc.created_at else "N/A"
+        sold_str = acc.sold_at.strftime("%d/%m/%Y %H:%M:%S") if acc.sold_at else "Chưa bán"
+        order_info = f"<b>Đơn hàng #{acc.order_id}</b>" if acc.order_id else "<i>(Không có)</i>"
+
+        msg = (
+            f"🔍 <b>CHI TIẾT TÀI KHOẢN #{acc.id} (product_accounts):</b>\n\n"
+            f"• 📦 <b>Sản phẩm:</b> #{acc.product_id} - <b>{prod_name}</b>\n"
+            f"• 📌 <b>Trạng thái:</b> {st_badge}\n"
+            f"• 👤 <b>Tài khoản / Link:</b>\n<code>{acc.account or '(Trống)'}</code>\n"
+            f"• 🔑 <b>Mật khẩu:</b>\n<code>{acc.password or '(Không có)'}</code>\n"
+            f"• 🛡️ <b>Mã 2FA Secret:</b>\n<code>{acc.two_factor or '(Không có)'}</code>\n"
+            f"• 📝 <b>Dữ liệu gốc (raw_data):</b>\n<code>{acc.raw_data or '(Trống)'}</code>\n"
+            f"• 🏷️ <b>Ghi chú / Note:</b> <code>{acc.note or '(Không có)'}</code>\n"
+            f"• 🧾 <b>Đơn hàng liên kết:</b> {order_info}\n"
+            f"• ⏰ <b>Ngày tạo:</b> <code>{created_str}</code>\n"
+            f"• ⚡ <b>Ngày xuất bán:</b> <code>{sold_str}</code>\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🗑️ <i>Để xóa tài khoản này khỏi DB, bấm nút bên dưới hoặc gõ:</i>\n"
+            f"<code>/delete {acc.id}</code>"
+        )
+
+        buttons = [
+            [InlineKeyboardButton(f"🗑️ Xóa tài khoản #{acc.id}", callback_data=f"del_acc_ask_{acc.id}")],
+            [InlineKeyboardButton("📋 Quay lại danh sách", callback_data="acc_page_1_0_all")],
+        ]
+        markup = InlineKeyboardMarkup(buttons)
+        await update.message.reply_html(msg, reply_markup=markup, disable_web_page_preview=True)
+
+
+@admin_required
+async def delete_account_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command to delete an account record by ID: /delete <account_id>"""
+    if not update.message:
+        return
+
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_html(
+            "⚠️ <b>CÁCH DÙNG LỆNH /delete:</b>\n\n"
+            "<code>/delete &lt;id&gt;</code> (Ví dụ: <code>/delete 32</code>)\n\n"
+            "<i>Xóa vĩnh viễn tài khoản có mã ID tương ứng khỏi bảng product_accounts.</i>"
+        )
+        return
+
+    account_id = int(context.args[0])
+    with get_db() as db:
+        success, message, info = AccountService.delete_account_by_id(db, account_id)
+
+    if not success or not info:
+        await update.message.reply_html(f"❌ {message}")
+        return
+
+    acc_display = info["account"]
+    if len(acc_display) > 60:
+        acc_display = acc_display[:55] + "..."
+
+    report = (
+        "🗑️ <b>ĐÃ XÓA TÀI KHOẢN KHỎI DATABASE THÀNH CÔNG!</b>\n\n"
+        f"• ID tài khoản đã xóa: <code>#{info['id']}</code>\n"
+        f"• Thuộc sản phẩm: <b>#{info['product_id']} - {info['product_name']}</b>\n"
+        f"• Tài khoản / Link: <code>{acc_display}</code>\n"
+        f"• Trạng thái trước khi xóa: <code>{info['status']}</code>\n"
+        f"• Ghi chú: <code>{info['note'] or '(Không có)'}</code>\n"
+        f"• Tồn kho khả dụng hiện tại: <b>{info['current_stock']}</b> sản phẩm\n"
+    )
+    await update.message.reply_html(report, disable_web_page_preview=True)
+
+
+@admin_required
+async def accounts_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle interactive inline buttons for accounts browsing and deletion."""
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+
+    data_str = query.data or ""
+
+    # Quick admin redirects
+    if data_str == "admin_view_stock":
+        with get_db() as db:
+            summary = AccountService.get_stock_summary(db)
+        total_avail = sum(item["available_stock"] for item in summary)
+        total_sold = sum(item["sold_count"] for item in summary)
+        lines = [
+            "📊 <b>BÁO CÁO THỐNG KÊ KHO NHANH:</b>\n",
+            f"• 📦 Tồn kho sẵn sàng: <b>{total_avail}</b>",
+            f"• 🔥 Đã bán: <b>{total_sold}</b>\n",
+        ]
+        for item in summary:
+            lines.append(f"• [ID: {item['product_id']}] <b>{item['product_name'][:25]}</b>: 📦 {item['available_stock']}")
+        buttons = [[InlineKeyboardButton("📋 Quay lại danh sách tài khoản", callback_data="acc_page_1_0_all")]]
+        await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return
+
+    if data_str == "admin_guide_addstock":
+        guide = (
+            "➕ <b>HƯỚNG DẪN NẠP HÀNG:</b>\n\n"
+            "• Nạp Netflix: <code>/addstock 5 50</code> hoặc <code>/addstock 5 =50</code>\n"
+            "• Nạp tài khoản thông thường: <code>/addstock 1 user@gmail.com | pass | 2fa</code>"
+        )
+        buttons = [[InlineKeyboardButton("📋 Quay lại danh sách tài khoản", callback_data="acc_page_1_0_all")]]
+        await query.edit_message_text(guide, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return
+
+    # 1. Pagination and filtering: acc_page_<page>_<prod_id>_<status>
+    if data_str.startswith("acc_page_"):
+        parts = data_str.split("_")
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 1
+        prod_id = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() and int(parts[3]) > 0 else None
+        st_slug = parts[4] if len(parts) > 4 else "all"
+        status = None if st_slug == "all" else st_slug.upper()
+
+        with get_db() as db:
+            data = AccountService.list_accounts_paginated(
+                db=db,
+                page=page,
+                page_size=6,
+                product_id=prod_id,
+                status=status,
+            )
+            text, markup = format_accounts_list_view(data)
+
+        try:
+            await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception:
+            pass
+        return
+
+    # 2. View details: acc_detail_<id>
+    if data_str.startswith("acc_detail_"):
+        account_id = int(data_str.split("_")[2])
+        with get_db() as db:
+            acc = AccountService.get_account_by_id(db, account_id)
+            if not acc:
+                await query.edit_message_text(f"❌ Không tìm thấy tài khoản #{account_id}.", parse_mode="HTML")
+                return
+
+            prod_name = acc.product.name if acc.product else f"Sản phẩm #{acc.product_id}"
+            st = (acc.status or "").upper()
+            st_badge = "🟢 SẴN SÀNG" if st == "AVAILABLE" else ("🔴 ĐÃ BÁN" if st == "SOLD" else f"⚪ {st}")
+            created_str = acc.created_at.strftime("%d/%m/%Y %H:%M:%S") if acc.created_at else "N/A"
+            sold_str = acc.sold_at.strftime("%d/%m/%Y %H:%M:%S") if acc.sold_at else "Chưa bán"
+            order_info = f"<b>Đơn hàng #{acc.order_id}</b>" if acc.order_id else "<i>(Không có)</i>"
+
+            msg = (
+                f"🔍 <b>CHI TIẾT TÀI KHOẢN #{acc.id} (product_accounts):</b>\n\n"
+                f"• 📦 <b>Sản phẩm:</b> #{acc.product_id} - <b>{prod_name}</b>\n"
+                f"• 📌 <b>Trạng thái:</b> {st_badge}\n"
+                f"• 👤 <b>Tài khoản / Link:</b>\n<code>{acc.account or '(Trống)'}</code>\n"
+                f"• 🔑 <b>Mật khẩu:</b>\n<code>{acc.password or '(Không có)'}</code>\n"
+                f"• 🛡️ <b>Mã 2FA Secret:</b>\n<code>{acc.two_factor or '(Không có)'}</code>\n"
+                f"• 📝 <b>Dữ liệu gốc (raw_data):</b>\n<code>{acc.raw_data or '(Trống)'}</code>\n"
+                f"• 🏷️ <b>Ghi chú / Note:</b> <code>{acc.note or '(Không có)'}</code>\n"
+                f"• 🧾 <b>Đơn hàng liên kết:</b> {order_info}\n"
+                f"• ⏰ <b>Ngày tạo:</b> <code>{created_str}</code>\n"
+                f"• ⚡ <b>Ngày xuất bán:</b> <code>{sold_str}</code>\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🗑️ <i>Để xóa tài khoản này khỏi DB, bấm nút bên dưới:</i>"
+            )
+
+            buttons = [
+                [InlineKeyboardButton(f"🗑️ Xóa tài khoản #{acc.id}", callback_data=f"del_acc_ask_{acc.id}")],
+                [InlineKeyboardButton("📋 Quay lại danh sách", callback_data="acc_page_1_0_all")],
+            ]
+            await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML", disable_web_page_preview=True)
+        return
+
+    # 3. Confirm deletion prompt: del_acc_ask_<id>
+    if data_str.startswith("del_acc_ask_"):
+        account_id = int(data_str.split("_")[3])
+        confirm_text = (
+            f"⚠️ <b>XÁC NHẬN XÓA TÀI KHOẢN #{account_id}?</b>\n\n"
+            f"Hành động này sẽ xóa vĩnh viễn bản ghi tài khoản #{account_id} khỏi bảng <code>product_accounts</code>.\n\n"
+            f"Bạn có chắc chắn muốn xóa không?"
+        )
+        buttons = [
+            [
+                InlineKeyboardButton("✅ Có, xóa ngay", callback_data=f"del_acc_confirm_{account_id}"),
+                InlineKeyboardButton("❌ Hủy bỏ", callback_data=f"acc_detail_{account_id}"),
+            ]
+        ]
+        await query.edit_message_text(confirm_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return
+
+    # 4. Execute deletion: del_acc_confirm_<id>
+    if data_str.startswith("del_acc_confirm_"):
+        account_id = int(data_str.split("_")[3])
+        with get_db() as db:
+            success, message, info = AccountService.delete_account_by_id(db, account_id)
+
+        if not success or not info:
+            await query.edit_message_text(f"❌ {message}", parse_mode="HTML")
+            return
+
+        acc_display = info["account"]
+        if len(acc_display) > 60:
+            acc_display = acc_display[:55] + "..."
+
+        report = (
+            "🗑️ <b>ĐÃ XÓA TÀI KHOẢN KHỎI DATABASE THÀNH CÔNG!</b>\n\n"
+            f"• ID tài khoản đã xóa: <code>#{info['id']}</code>\n"
+            f"• Thuộc sản phẩm: <b>#{info['product_id']} - {info['product_name']}</b>\n"
+            f"• Tài khoản / Link: <code>{acc_display}</code>\n"
+            f"• Trạng thái trước khi xóa: <code>{info['status']}</code>\n"
+            f"• Ghi chú: <code>{info['note'] or '(Không có)'}</code>\n"
+            f"• Tồn kho khả dụng hiện tại: <b>{info['current_stock']}</b> sản phẩm\n"
+        )
+        buttons = [[InlineKeyboardButton("📋 Quay lại danh sách tài khoản", callback_data="acc_page_1_0_all")]]
+        await query.edit_message_text(report, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML", disable_web_page_preview=True)
+        return
+

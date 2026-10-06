@@ -38,7 +38,7 @@ bot-chat/
 | **2** | **ChatGPT Plus 1 Tháng (Không bảo hành)** | **150.000đ** | 🔴 Tạm ẩn | Giá tiết kiệm, tài khoản dùng riêng |
 | **3** | **Tài khoản ChatGPT có offer trial Plus free 1 tháng** | **30.000đ** | 🟢 Đang bán | Sẵn ưu đãi dùng thử Plus free 1 tháng |
 | **4** | **Gmail Đa Quốc Gia (Add thẻ + ví, Live 15p - 48h)** | **5.000đ** | 🟢 Đang bán | Đa quốc gia, add thẻ/ví có ver, live 15p-48h, mua 1 test trước khi SLL |
-| **5** | **Link Netflix (Đăng nhập 1 Click - HSD 30 Ngày)** | **4.000đ** | 🟢 Đang bán | Đăng nhập 1 click qua URL token, HSD 30 ngày, truy cập trong 15p |
+| **5** | **Link netflix 4k + HDR 30 ngày  (KBH)** | **4.000đ** | 🟢 Đang bán | Đăng nhập 1 click qua URL token, HSD 30 ngày, truy cập trong 15p |
 
 
 ---
@@ -127,8 +127,11 @@ Khi chạy, hệ thống sẽ:
 | Câu lệnh Admin | Cú pháp & Ví dụ | Chức năng |
 | :--- | :--- | :--- |
 | **`/stock`** | `/stock` | **Báo cáo tồn kho thời gian thực:** Xem chi tiết số lượng tài khoản có sẵn để bán, số lượng đã bán và trạng thái từng gói dịch vụ. |
+| **`/accounts`** | `/accounts [id/trạng_thái]` | **Xem chi tiết bảng product_accounts:** Xem danh sách phân trang tất cả tài khoản trong kho, xem ID, tài khoản, link, trạng thái (AVAILABLE/SOLD), mật khẩu và 2FA.<br>*Ví dụ:* `/accounts`, `/accounts 5`, `/accounts available`, `/account 32` |
+| **`/delete`** | `/delete <account_id>` | **Xóa tài khoản khỏi database:** Xóa vĩnh viễn 1 bản ghi tài khoản theo mã ID tài khoản và tự động cập nhật lại tồn kho.<br>*Ví dụ:* `/delete 32` |
 | **`/addstock`** | `/addstock <ID> <email \| pass \| 2fa>` | **Nạp tài khoản trực tiếp qua Telegram & Tự động phát thông báo:**<br>• `ID`: Mã gói sản phẩm (ví dụ `1` hoặc `2`).<br>• Hỗ trợ nạp 1 hoặc hàng loạt tài khoản.<br>• **Tự động gửi thông báo hàng mới về (Restock Alert)** kèm ảnh gói và nút **[ ⚡ Mua ngay ]** đến tất cả khách hàng từng nhắn tin với bot (theo ngôn ngữ của từng khách).<br>*Ví dụ:*<br>`/addstock 1 user1@gmail.com \| Pass123! \| 2FA_KEY_HERE` |
 | **`/test_pay`** | `/test_pay <mã_đơn>` | **Giả lập thanh toán đơn hàng:** Kích hoạt lập tức luồng giao hàng tự động mà không cần chuyển khoản thật *(Ví dụ: `/test_pay 1`)*. |
+| **`/baotri`** | `/baotri [số_phút]` | **Phát thông báo bảo trì hệ thống (Broadcast):** Gửi tin nhắn thông báo bảo trì đa ngôn ngữ (VI/EN) tới toàn bộ khách hàng trong CSDL *(Ví dụ: `/baotri 30`)*. |
 
 ---
 
@@ -146,13 +149,58 @@ Hình ảnh minh họa sản phẩm được tự động liên kết vào kịc
 
 ---
 
-### 🛠️ 4. Công cụ dòng lệnh nạp hàng (CLI Script)
+### 🛠️ 4. Công cụ nạp tài khoản từ file `danhsach.txt` (CLI Script)
 
-Ngoài việc nạp kho bằng lệnh `/addstock` trên Telegram, bạn có thể nạp tài khoản hàng loạt từ file văn bản qua terminal máy chủ (khi nạp thành công, công cụ cũng sẽ tự động gửi thông báo hàng mới về kèm nút mua ngay tới tất cả khách hàng):
+Ngoài việc nạp kho bằng lệnh `/addstock` trên Telegram, bạn có thể nạp tài khoản hàng loạt trực tiếp từ file văn bản **`danhsach.txt`** qua terminal máy chủ (khi nạp thành công, công cụ cũng sẽ tự động phát thông báo hàng mới về kèm ảnh và nút **[ ⚡ Mua ngay ]** đến toàn bộ khách hàng):
 
+#### 🚀 Cách 1: Nạp trực tiếp file `danhsach.txt` bằng 1 câu lệnh (Khuyên dùng)
+Chạy lệnh PowerShell kèm tham số `-p <ID_sản_phẩm>` và `-f danhsach.txt`:
+
+* **Nạp vào Gói ChatGPT có Offer Trial Plus (ID: `3`):**
+  ```powershell
+  .\venv\Scripts\python.exe add_stock.py -p 3 -f danhsach.txt
+  ```
+* **Nạp vào Gói Gmail Đa Quốc Gia (ID: `4`):**
+  ```powershell
+  .\venv\Scripts\python.exe add_stock.py -p 4 -f danhsach.txt
+  ```
+* **Nạp vào Gói ChatGPT Plus 1 Tháng Bảo hành full (ID: `1`):**
+  ```powershell
+  .\venv\Scripts\python.exe add_stock.py -p 1 -f danhsach.txt
+  ```
+* **Nạp vào Gói ChatGPT Plus 1 Tháng Không bảo hành (ID: `2`):**
+  ```powershell
+  .\venv\Scripts\python.exe add_stock.py -p 2 -f danhsach.txt
+  ```
+
+> [!TIP]
+> **Tự động lọc trùng (Anti-duplicate):** Hệ thống tự động so khớp email trên toàn bộ cơ sở dữ liệu (cả tài khoản đang có sẵn lẫn tài khoản đã từng bán cho khách trước đây) để đảm bảo không bao giờ nạp hoặc bán trùng tài khoản.
+
+#### 📋 Cách 2: Xem tồn kho nhanh qua CLI
+```powershell
+.\venv\Scripts\python.exe add_stock.py -l
+```
+
+#### 🖥️ Cách 3: Chạy giao diện tương tác (Interactive Wizard)
 ```powershell
 .\venv\Scripts\python.exe add_stock.py
 ```
+Nhập ID sản phẩm cần nạp, sau đó dán trực tiếp danh sách tài khoản vào terminal và bấm `Enter 2 lần` (hoặc gõ `END`).
+
+#### 📝 Định dạng chuẩn trong file `danhsach.txt`:
+Mỗi tài khoản nằm trên 1 dòng riêng biệt (hỗ trợ phân cách bằng dấu gạch đứng `|` hoặc dấu hai chấm `:`):
+* **Có 2FA Secret (Dành cho tài khoản ChatGPT):**
+  ```text
+  email@gmail.com|MatKhau123|2FA_SECRET_KEY_BASE32
+  ```
+* **Không có 2FA (Dành cho Gmail/Mail thường):**
+  ```text
+  email@gmail.com|MatKhau123
+  ```
+* **Link đăng nhập (Dành cho Netflix Token Link):**
+  ```text
+  https://netflix.com/?nftoken=...
+  ```
 
 ---
 

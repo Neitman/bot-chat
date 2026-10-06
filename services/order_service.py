@@ -182,7 +182,13 @@ class OrderService:
         )
 
     @staticmethod
-    def generate_vietqr_url(order_id: int, total_amount: int) -> str:
+    def generate_vietqr_url(
+        order_id: int,
+        total_amount: int,
+        bank_id: Optional[str] = None,
+        account_no: Optional[str] = None,
+        account_name: Optional[str] = None,
+    ) -> str:
         """Generate a VietQR payment image URL for NAPAS 24/7 banking transfer.
 
         When scanned with any Vietnamese banking app, it automatically fills:
@@ -191,11 +197,14 @@ class OrderService:
         - Exact order amount
         - Transfer memo / description: 'DH {order_id}'
         """
+        b_id = bank_id or BANK_ID
+        acc_no = account_no or BANK_ACCOUNT
+        acc_name = account_name or BANK_ACCOUNT_NAME
         description = f"DH {order_id}"
         encoded_desc = urllib.parse.quote(description)
-        encoded_name = urllib.parse.quote(BANK_ACCOUNT_NAME)
+        encoded_name = urllib.parse.quote(acc_name)
         return (
-            f"https://img.vietqr.io/image/{BANK_ID}-{BANK_ACCOUNT}-compact2.png"
+            f"https://img.vietqr.io/image/{b_id}-{acc_no}-compact2.png"
             f"?amount={total_amount}&addInfo={encoded_desc}&accountName={encoded_name}"
         )
 
@@ -239,7 +248,7 @@ class OrderService:
                 "is_active": True,
             },
             {
-                "name": "Link Netflix (Đăng nhập 1 Click - HSD 30 Ngày)",
+                "name": "Link netflix 4k + HDR 30 ngày  (KBH)",
                 "price": 4000,
                 "is_active": True,
             },
@@ -264,6 +273,8 @@ class OrderService:
                         break
 
             if matched_prod:
+                if matched_prod.name != plan_name:
+                    matched_prod.name = plan_name
                 if matched_prod.price != plan_price:
                     matched_prod.price = plan_price
                 if matched_prod.is_active != target_active:
